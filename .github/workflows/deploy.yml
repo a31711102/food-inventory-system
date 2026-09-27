@@ -40,12 +40,30 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+
+      # Pages の設定を取得する。まだ「GitHub Actions」ソースになっていなければ
+      # enablement: true が有効化する（Settings での手作業を不要にする）。
+      - name: Pages の設定
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # base パスは Pages 自身が返す base_path を使う。
+      # プロジェクトページなら /<リポジトリ名>、ユーザー/組織ページなら空になるため、
+      # 前後のスラッシュを整えてから渡す。
       - name: ビルド
-        # リポジトリ名をそのまま base パスに使う
-        run: npm run build
-        env:
-          VITE_BASE: /${{ github.event.repository.name }}/
-      - uses: actions/configure-pages@v5
+        run: |
+          BASE="${{ steps.pages.outputs.base_path }}"
+          BASE="/${BASE#/}"
+          BASE="${BASE%/}/"
+          echo "VITE_BASE=$BASE"
+          VITE_BASE="$BASE" npm run build
+
+      # Jekyll による加工を止める（_ で始まるファイルが落とされないように）
+      - name: .nojekyll を置く
+        run: touch dist/.nojekyll
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
