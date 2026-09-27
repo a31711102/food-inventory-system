@@ -51,6 +51,18 @@ export function previousYm(targetYm: string): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+/** 「今日」を画面に出すための表示用。対象年月が今日から導かれていることを示す。 */
+export function formatDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * 対象年月の初期値＝今日の前月。
+ *
+ * 棚卸は月末に数え、翌月に処理するのが通常の運用のため。
+ * 固定値ではなく、画面を開いた日から毎月ずれていく。
+ * 当月末に当月分を処理する場合や、過去の月をやり直す場合は STEP 1 で変更する。
+ */
 export function defaultTargetYm(now = new Date()): string {
   const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;

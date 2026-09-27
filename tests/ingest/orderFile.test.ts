@@ -113,6 +113,23 @@ describe('集計期間の検証（要件§4「集計期間」）', () => {
     expect(issue.message).toContain('2026-09');
   });
 
+  it('E004 のメッセージは対象年月を直す道も示す（過去の月をやり直せる）', () => {
+    // 誤っているのはファイルとは限らない。7月分をやり直そうとして
+    // 対象年月が既定の8月のままなら、直すべきは対象年月の側。
+    const issue = checkOrderPeriod('2026-08', '2026/07/01', '2026/07/31', 'orders.csv')[0]!;
+    expect(issue.code).toBe('E004');
+    expect(issue.message).toContain('対象年月を 2026-07 に変更');
+    expect(issue.message).toContain('2026-08分を処理するなら');
+  });
+
+  it('期間が月をまたぐときは、どちらが正しいか確認するよう促すだけにする', () => {
+    const issue = checkOrderPeriod('2026-08', '2026/07/01', '2026/09/30', 'orders.csv')[0]!;
+    expect(issue.code).toBe('E004');
+    expect(issue.message).toContain('どちらが正しいか');
+    // 存在しない年月への変更を勧めない
+    expect(issue.message).not.toContain('に変更してください');
+  });
+
   it('月初〜月末でなければ W015 で注意喚起する', () => {
     const issues = checkOrderPeriod('2026-08', '2026/08/05', '2026/08/25', 'orders.csv');
     expect(issues.map((i) => i.code)).toContain('W015');

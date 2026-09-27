@@ -1,20 +1,25 @@
 import { Panel, FileSlot, Note } from '../components';
 import type { AppFiles, FileKind } from '../App';
 import type { UploadedFile } from '../../app/pipeline';
-import { previousYm } from '../format';
+import { formatDate, previousYm } from '../format';
 
 export function StepUpload({
   targetYm,
+  onSetTargetYm,
   files,
   onSetFile,
   onRun,
   running,
+  today = new Date(),
 }: {
   targetYm: string;
+  onSetTargetYm: (ym: string) => void;
   files: AppFiles;
   onSetFile: (kind: FileKind, file: UploadedFile | null) => void;
   onRun: () => void | Promise<void>;
   running: boolean;
+  /** 「初期値は今日の前月」の説明に出す日付。テストから固定するために引数にしている */
+  today?: Date;
 }): JSX.Element {
   const select = async (kind: FileKind, file: File): Promise<void> => {
     onSetFile(kind, { fileName: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
@@ -25,8 +30,26 @@ export function StepUpload({
       title="STEP 1　月次処理開始"
       hint="対象年月を選び、4種類のファイルをアップロードします。ファイル種別を取り違えないよう、それぞれ専用の欄に指定してください。"
     >
+      <div className="target-ym">
+        <label htmlFor="target-ym">
+          対象年月（棚卸を行った月）
+          <input
+            id="target-ym"
+            type="month"
+            value={targetYm}
+            onChange={(e) => onSetTargetYm(e.target.value)}
+          />
+        </label>
+        <span className="target-ym-sub">
+          前月比較の対象は <strong>{previousYm(targetYm)}</strong>
+        </span>
+      </div>
+
       <Note>
-        対象年月は <strong>{targetYm}</strong>、前月比較の対象は <strong>{previousYm(targetYm)}</strong> です。
+        初期値は今日（{formatDate(today)}）の<strong>前月</strong>です。
+        過去の月をやり直すときは、上の対象年月を変更してから取り込んでください。
+        4つのファイルはすべて対象年月のものを指定します
+        （発注累計照会の集計期間が対象年月と違うとエラーになります）。
         当月本部マスタには、店舗が数えた期末在庫を入力済みのものを指定してください。
       </Note>
 

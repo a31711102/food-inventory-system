@@ -105,15 +105,12 @@ export default function App(): JSX.Element {
       <header className="app-header">
         <h1>食品棚卸月次処理システム</h1>
         <div className="header-meta">
-          <label>
-            対象年月{' '}
-            <input
-              type="month"
-              value={targetYm}
-              onChange={(e) => setTargetYm(e.target.value)}
-              style={{ width: 150 }}
-            />
-          </label>
+          <span className="header-ym">
+            対象年月 <strong>{targetYm}</strong>
+            <button type="button" className="linklike" onClick={() => setStep(1)}>
+              STEP 1 で変更
+            </button>
+          </span>
           <label>
             ロール{' '}
             <select value={role} onChange={(e) => setRole(e.target.value as Role)} style={{ width: 130 }}>
@@ -159,6 +156,7 @@ export default function App(): JSX.Element {
       {step === 1 ? (
         <StepUpload
           targetYm={targetYm}
+          onSetTargetYm={setTargetYm}
           files={files}
           onSetFile={setFile}
           onRun={async () => {

@@ -152,4 +152,66 @@ describe('対象年月と発注累計の突合（E004）', () => {
     expect(badgeCounts().blocking).toBe(1);
     expect(document.body.textContent).toContain('発注累計照会の集計期間が対象年月と一致しません');
   }, 60000);
+
+  it('E004 のメッセージが、対象年月を直す道を示している', async () => {
+    const h = setupApp();
+    await selectFile(h, 'master', set.master);
+    await selectFile(h, 'previous', set.previous);
+    await selectFile(h, 'orders', set.orders);
+    await selectFile(h, 'unitMaster', set.unitMaster);
+    await runImport(h);
+
+    // 「ファイルが違う」だけでなく「対象年月を変える」も提示されていないと、
+    // 過去の月をやり直そうとした人はここで詰まる。
+    expect(document.body.textContent).toContain(`対象年月を ${TARGET_YM} に変更`);
+  }, 60000);
+
+  it('対象年月を合わせれば、既定の月でなくても処理できる', async () => {
+    // 報告された事象の再現と回復。既定は「前月」だが、
+    // 対象年月をファイルに合わせれば任意の月を処理できる（固定ではない）。
+    const h = setupApp();
+    await selectFile(h, 'master', set.master);
+    await selectFile(h, 'previous', set.previous);
+    await selectFile(h, 'orders', set.orders);
+    await selectFile(h, 'unitMaster', set.unitMaster);
+    await runImport(h);
+    expect(badgeCounts().blocking).toBe(1);
+
+    await setTargetYm(h, TARGET_YM);
+    await runImport(h);
+
+    expect(badgeCounts().blocking).toBe(0);
+    expect(document.body.textContent).not.toContain('発注累計照会の集計期間が対象年月と一致しません');
+  }, 60000);
+});
+
+describe('対象年月の指定場所（固定値ではないと分かること）', () => {
+  it('STEP 1 に対象年月の入力欄があり、既定は今日の前月', () => {
+    setupApp();
+    const input = document.querySelector<HTMLInputElement>('input[type=month]');
+    expect(input).not.toBeNull();
+    const now = new Date();
+    const expected = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    expect(input!.value).toBe(
+      `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, '0')}`,
+    );
+  });
+
+  it('既定値が今日から導かれていることを画面に書いてある', () => {
+    setupApp();
+    expect(document.body.textContent).toContain('初期値は今日');
+    expect(document.body.textContent).toContain('過去の月をやり直すとき');
+  });
+
+  it('入力欄は STEP 1 だけ。他のステップではヘッダから STEP 1 へ戻す', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+    await goToStep(h, 5);
+
+    expect(document.querySelector('input[type=month]')).toBeNull();
+    const back = findButton('STEP 1 で変更');
+    expect(back).not.toBeNull();
+    await h.user.click(back!);
+    expect(document.querySelector('input[type=month]')).not.toBeNull();
+  }, 60000);
 });

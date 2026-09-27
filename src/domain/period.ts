@@ -26,6 +26,7 @@ function lastDayOfMonth(year: number, month: number): number {
  * 集計期間が対象年月と整合するか検証する。
  *
  * - 年月が違う → E004（BLOCKING）。取り違えたファイルで帳票を作らせない。
+ *   ただし誤っているのは対象年月の側かもしれないので、両方の直し方を示す。
  * - 年月は合っているが月初〜月末でない → W015（WARNING）。締め日運用の可能性があるため止めない。
  * - 期間が読めない → 何も言わない（推測しない）。
  */
@@ -64,9 +65,15 @@ export function checkOrderPeriod(
   const toYm = `${to.year}-${String(to.month).padStart(2, '0')}`;
 
   if (fromYm !== targetYm || toYm !== targetYm) {
+    // 誤っているのはファイルとは限らない。対象年月の指定漏れでも同じ状態になる。
+    // 「ファイルを直せ」とだけ書くと、過去の月をやり直すときに手が止まる。
+    const howToFix =
+      fromYm === toYm
+        ? `${fromYm}分を処理するなら STEP 1 の対象年月を ${fromYm} に変更してください。${targetYm}分を処理するなら、${targetYm}の発注累計照会を指定し直してください。`
+        : 'STEP 1 の対象年月と、指定した発注累計照会のどちらが正しいかを確認してください。';
     issues.add(
       'E004',
-      `発注累計照会の集計期間が対象年月と一致しません（ファイルの期間: ${periodFrom} 〜 ${periodTo} / 対象年月: ${targetYm}）。別の月のファイルを指定していないか確認してください。`,
+      `発注累計照会の集計期間が対象年月と一致しません（ファイルの期間: ${periodFrom} 〜 ${periodTo} / 対象年月: ${targetYm}）。${howToFix}`,
       ref,
     );
     return [...issues.all];

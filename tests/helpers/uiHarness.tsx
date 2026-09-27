@@ -189,9 +189,16 @@ export async function clearFile(h: Harness, slot: SlotName): Promise<void> {
  * 対象年月を設定する。
  * 既定値は「前月」（画面を開いた月の1つ前）なので、テストデータの 2026-09 を使うには
  * 必ず指定し直す必要がある。指定しないと発注累計の集計期間と食い違い E004 になる。
+ *
+ * 入力欄は STEP 1 にしかない。別のステップから呼ばれたらヘッダの
+ * 「STEP 1 で変更」を押して戻る（実際の操作と同じ経路）。
  * `<input type="month">` は制御コンポーネントなので、change を直接発火させる。
  */
-export async function setTargetYm(_h: Harness, ym: string): Promise<void> {
+export async function setTargetYm(h: Harness, ym: string): Promise<void> {
+  if (!document.querySelector('input[type=month]')) {
+    const back = screen.queryByRole('button', { name: 'STEP 1 で変更' });
+    if (back) await h.user.click(back);
+  }
   const input = document.querySelector<HTMLInputElement>('input[type=month]');
   if (!input) throw new Error('対象年月の入力欄が見つかりません');
   fireEvent.change(input, { target: { value: ym } });
