@@ -331,11 +331,15 @@ export class XlsxWorkbook {
     // 元のバイト列から読み直す。同じインスタンスで複数回呼んでも結果が変わらないようにするため。
     const out = await JSZip.loadAsync(this.originalBytes);
 
-    // --- 1. セルの差し替え ---
-    for (const [sheetName, edits] of this.pending) {
-      const sheet = this.sheets.get(sheetName)!;
-      const patched = applyCellEdits(sheet.xml, edits, sheet.cells);
-      out.file(sheet.path, patched);
+    // --- 1. セルの差し替えと、数式キャッシュの破棄 ---
+    // 書き戻した値を参照する数式のキャッシュは古くなる。編集していないシートでも
+    // 他シートを参照している数式（分析用 → 入力用!U列 など）があるため、
+    // 再計算させるときは全シートからキャッシュ値を落とす。
+    for (const sheet of this.sheets.values()) {
+      const edits = this.pending.get(sheet.name);
+      let xml = edits ? applyCellEdits(sheet.xml, edits, sheet.cells) : sheet.xml;
+      if (this.fullCalc) xml = stripCachedFormulaValues(xml);
+      if (xml !== sheet.xml) out.file(sheet.path, xml);
     }
 
     // --- 2. シート追加 ---
@@ -373,6 +377,16 @@ export class XlsxWorkbook {
     // --- 3. 開いたときの再計算 ---
     if (this.fullCalc) {
       workbookXml = setFullCalcOnLoad(workbookXml);
+      // 依存関係キャッシュは外部から値を書き換えると食い違う。捨てて Excel に作り直させる。
+      out.remove('xl/calcChain.xml');
+      const withoutCalcChain = typesXml.replace(
+        /<Override PartName="\/xl\/calcChain\.xml"[^>]*\/>/,
+        '',
+      );
+      if (withoutCalcChain !== typesXml) {
+        typesXml = withoutCalcChain;
+        out.file('[Content_Types].xml', typesXml);
+      }
     }
     if (workbookXml !== this.workbookXml || this.addedSheets.length > 0) {
       out.file('xl/workbook.xml', workbookXml);
@@ -409,14 +423,46 @@ function maxSheetId(workbookXml: string): number {
   return max;
 }
 
+/**
+ * 開いたときに全数式を計算し直させる。
+ *
+ * `fullCalcOnLoad="1"` だけでは足りない。`calcId` に Excel 自身のバージョン以上の値が
+ * 入っていると「同じ計算エンジンで書かれたのでキャッシュ値は正しい」と判断され、
+ * 再計算が省略されることがある。`calcId="0"`（＝未知のエンジンが書いた）にして
+ * 必ず計算し直させる。
+ */
 function setFullCalcOnLoad(workbookXml: string): string {
-  if (/fullCalcOnLoad="1"/.test(workbookXml)) return workbookXml;
-  if (/<calcPr\b/.test(workbookXml)) {
-    return workbookXml.replace(/<calcPr\b([^>]*?)(\/?)>/, (_all, attrs: string) => {
-      return `<calcPr${attrs} fullCalcOnLoad="1"/>`;
+  if (/<calcPr[ />]/.test(workbookXml)) {
+    return workbookXml.replace(/<calcPr(\s[^>]*?)?\s*\/?>/, (_all, attrs: string | undefined) => {
+      const cleaned = (attrs ?? '')
+        .replace(/\s*calcId="[^"]*"/g, '')
+        .replace(/\s*fullCalcOnLoad="[^"]*"/g, '');
+      return `<calcPr${cleaned} calcId="0" fullCalcOnLoad="1"/>`;
     });
   }
-  return workbookXml.replace('</workbook>', '<calcPr fullCalcOnLoad="1"/></workbook>');
+  return workbookXml.replace('</workbook>', '<calcPr calcId="0" fullCalcOnLoad="1"/></workbook>');
+}
+
+/**
+ * 数式セルに残っているキャッシュ値（`<v>`）を取り除く。
+ *
+ * 書き戻しで入力セルの値が変われば、それを参照する数式のキャッシュ値は古くなる。
+ * キャッシュが残っていると、再計算しない環境ではそれがそのまま表示される
+ * （分析用シートが 0 と #DIV/0! のまま出る事象の原因）。
+ * 値を消しておけば、計算するまで表示できるものが無いので取り違えようがない。
+ *
+ * `t` 属性はキャッシュ値の型を表すものなので、値と一緒に外す。
+ * 数式を持たないセル（＝実データ）には一切触らない。
+ */
+function stripCachedFormulaValues(sheetXml: string): string {
+  const r = sheetXml.replace(/<c(\s[^>]*)?>([\s\S]*?)<\/c>/g, (all, attrs: string | undefined, inner: string) => {
+    if (!inner.includes('<f')) return all;
+    const withoutValue = inner.replace(/<v>[\s\S]*?<\/v>/g, '');
+    if (withoutValue === inner) return all;
+    const cleanedAttrs = (attrs ?? '').replace(/\s*t="[^"]*"/g, '');
+    return `<c${cleanedAttrs}>${withoutValue}</c>`;
+  });
+  return r;
 }
 
 /** 既存セルの XML から style 属性だけを引き継いで新しいセル XML を作る。 */

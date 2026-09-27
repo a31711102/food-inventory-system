@@ -262,6 +262,56 @@ describe('XlsxWorkbook 書き戻し（ZIP直接パッチ）', () => {
       expect(() => wb.setNumber('分析用', 'C22', 1)).toThrow(FormulaCellWriteError);
     });
 
+    it('再計算のために calcId を 0 にして fullCalcOnLoad を立てる', async () => {
+      // calcId に Excel 自身のバージョン以上の値が残っていると
+      // 「キャッシュ値は正しい」と判断され再計算が省略されることがある
+      const wb = await loadFresh();
+      wb.enableFullCalcOnLoad();
+      const zip = await JSZip.loadAsync(await wb.toUint8Array());
+      const workbookXml = await zip.file('xl/workbook.xml')!.async('string');
+
+      expect(workbookXml).toContain('fullCalcOnLoad="1"');
+      expect(workbookXml).toContain('calcId="0"');
+      expect(workbookXml).not.toMatch(/calcId="[1-9]/);
+    });
+
+    it('数式のキャッシュ値を消し、依存関係キャッシュも捨てる', async () => {
+      // キャッシュが残っていると、再計算しない環境で古い値がそのまま表示される
+      // （分析用シートが 0 と #DIV/0! のまま出た事象）
+      const wb = await loadFresh();
+      wb.enableFullCalcOnLoad();
+      const bytes = await wb.toUint8Array();
+      const zip = await JSZip.loadAsync(bytes);
+
+      expect(zip.file('xl/calcChain.xml')).toBeNull();
+      for (const path of Object.keys(zip.files).filter((p) => /worksheets\/sheet\d+\.xml$/.test(p))) {
+        const xml = await zip.file(path)!.async('string');
+        // 数式のすぐ後にキャッシュ値が続くセルが残っていないこと
+        expect(xml).not.toMatch(/<\/f><v>/);
+        expect(xml).not.toMatch(/<f[^>]*\/><v>/);
+      }
+    });
+
+    it('キャッシュ値を消しても数式と実データは残る', async () => {
+      const wb = await loadFresh();
+      wb.setNumber('入力用', 'G4', 9);
+      wb.enableFullCalcOnLoad();
+      const out = await XlsxWorkbook.load(await wb.toUint8Array());
+
+      expect(out.cell('入力用', 'J4')?.formula).toBe('SUM(H4:I4)-G4');
+      expect(out.cell('入力用', 'J4')?.value).toBeNull(); // 計算するまで値は無い
+      expect(out.cell('入力用', 'G4')?.value).toBe(9); // 書き込んだ実データは残る
+      expect(out.cell('入力用', 'D4')?.value).toBe('000158'); // 元の実データも残る
+    });
+
+    it('再計算させないときはキャッシュ値をそのまま残す', async () => {
+      const wb = await loadFresh();
+      const out = await XlsxWorkbook.load(await wb.toUint8Array());
+
+      expect(out.cell('入力用', 'J4')?.formula).toBe('SUM(H4:I4)-G4');
+      expect(out.cell('入力用', 'J4')?.value).not.toBeNull();
+    });
+
     it('入力セルへの書き込みは通る', async () => {
       const wb = await loadFresh();
       expect(() => wb.setNumber('分析用', 'C4', 7000000)).not.toThrow();
