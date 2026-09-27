@@ -1,0 +1,32 @@
+# 依存関係とビルド成果物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# テスト
+coverage/
+.vitest/
+
+# 設計書・運用マニュアル等の社内文書。店舗の実業績値や業務の詳細を含むため公開しない
+docs/
+
+# 実データ（店舗の原価情報）は公開リポジトリに含めない
+*.xlsx
+*.xlsm
+*.db
+tests/fixtures/real/*
+!tests/fixtures/real/expected.example.json
+testdata/
+
+# Excel の一時ファイル
+~$*
+
+# エディタ・OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# 発注累計照会など実データを含むCSVも公開しない
+*.csv

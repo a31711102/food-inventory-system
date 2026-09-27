@@ -1,0 +1,25 @@
+{
+  "_comment": "実ファイル検証(L4)の期待値。実際の値は tests/fixtures/real/expected.json に置く（gitignore対象）。このファイルは構造の見本で、値はダミー",
+  "august": {
+    "totalSales": 0,
+    "totalUsageAmount": 0,
+    "totalClosingAmount": 0,
+    "costRateAfterLossPercent": 0,
+    "saladVegetableUsage": 0
+  },
+  "july": {
+    "totalSales": 0,
+    "totalUsageAmount": 0,
+    "totalClosingAmount": 0,
+    "costAfterLoss": 0,
+    "costRateAfterLossPercent": 0,
+    "saladVegetableUsage": 0
+  },
+  "june": {
+    "totalSales": 0,
+    "totalUsageAmount": 0,
+    "costRateAfterLossPercent": 0,
+    "saladVegetableUsage": 0
+  },
+  "storeCode": "0000"
+}
