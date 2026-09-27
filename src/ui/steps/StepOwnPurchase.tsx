@@ -25,6 +25,11 @@ export function StepOwnPurchase({
   const [unitPrice, setUnitPrice] = useState('');
   const [note, setNote] = useState('');
 
+  const registeredCount = result.ownPurchaseCandidates.filter((c) => c.registered).length;
+  /** 登録外の品目には理由を残してもらう。翌月「なぜ入れたのか」を追えるようにするため */
+  const needsNote = selected !== null && !selected.registered;
+  const canCommit = selected !== null && (!needsNote || note.trim() !== '');
+
   // 検索方法の選択欄は設けない（要件§7-4）。入力中に品名を部分一致検索する。
   const candidates = useMemo(
     () => searchOwnPurchaseCandidates(result.ownPurchaseCandidates, query, 50),
@@ -54,7 +59,7 @@ export function StepOwnPurchase({
   };
 
   const commit = (): void => {
-    if (!selected) return;
+    if (!selected || !canCommit) return;
     const entry: OwnPurchaseInput = {
       code: selected.code,
       purchaseQty: Number(purchaseQty) || 0,
@@ -78,11 +83,22 @@ export function StepOwnPurchase({
     <>
       <Panel
         title="STEP 4　自店購入入力"
-        hint="品名を入力すると、自店購入品として登録された商品を部分一致で検索します。候補から選んで数量と単価を入力してください。"
+        hint="品名を入力すると当月マスタの全商品を部分一致で検索します。候補から選んで数量と単価を入力してください。"
       >
         <Note>
-          自店購入品は <strong>缶ビール・ミニトマト・キャベツ・コーラ160ml・レモンスライス</strong> の5品です（当月マスタに {result.ownPurchaseCandidates.length} 件）。 これらは本部発注ではないため発注累計照会に現れず、ここで入力しないと期中仕入が0のままになります。
-          ここに出ない品目は自店購入品として登録されていません。品目が増えた場合は設定の追加が必要です。
+          自店購入品として登録されているのは
+          <strong>缶ビール・ミニトマト・キャベツ・コーラ160ml・レモンスライス</strong> の5品です。
+          このうち当月マスタにあるのは <strong>{registeredCount} 件</strong>で、
+          候補の先頭に <span className="tag-reg">登録済</span> つきで出ます。
+          これらは本部発注ではないため発注累計照会に現れず、ここで入力しないと期中仕入が0のままになります。
+        </Note>
+        <Note>
+          <strong>登録外の商品も入力できます。</strong>
+          発注累計にも登録リストにも無いのに店舗が購入した品（炭酸水・ガムシロップなど）や、
+          本部発注でも通常と違う方法で納品され発注累計に載らなかった品がこれにあたります。
+          入力するときは<strong>理由を備考に残してください</strong>。指摘一覧に情報として記録され、
+          翌月以降に登録すべき品かどうかを判断できます。
+          備品（コードの数字が5桁）は「この棚卸表で計算しない」取り決めのため候補に出ません。
         </Note>
 
         <label className="field">
@@ -108,6 +124,7 @@ export function StepOwnPurchase({
               candidates.map((c) => (
                 <button key={c.code} type="button" className="candidate" onClick={() => pick(c)}>
                   <span className="c-code">{c.code}</span>
+                  {c.registered ? <span className="tag-reg">登録済</span> : null}
                   {c.name}
                   <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
                     {c.category}
@@ -119,11 +136,19 @@ export function StepOwnPurchase({
         ) : (
           <div className="panel" style={{ marginTop: 12, background: '#fcfdfe' }}>
             <h3 style={{ marginTop: 0 }}>
-              <span className="mono">{selected.code}</span> {selected.name}
+              <span className="mono">{selected.code}</span>{' '}
+              {selected.registered ? <span className="tag-reg">登録済</span> : <span className="tag-unreg">登録外</span>}{' '}
+              {selected.name}
               <span className="muted" style={{ marginLeft: 8, fontSize: 13 }}>
                 集計先 {selected.category}
               </span>
             </h3>
+            {needsNote ? (
+              <Note variant="warn">
+                自店購入品として登録されていない商品です。入力できますが、
+                <strong>なぜ自店購入として計上するのか</strong>を備考に残してください（必須）。
+              </Note>
+            ) : null}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <label className="field">
                 <span>期中仕入（数量）</span>
@@ -138,12 +163,17 @@ export function StepOwnPurchase({
                 <input type="number" step="any" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
               </label>
               <label className="field">
-                <span>備考</span>
-                <input type="text" value={note} onChange={(e) => setNote(e.target.value)} />
+                <span>備考{needsNote ? '（必須）' : ''}</span>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder={needsNote ? '例: 近隣スーパーで購入' : ''}
+                />
               </label>
             </div>
             <div className="actions" style={{ marginTop: 0 }}>
-              <button type="button" className="primary" onClick={commit}>
+              <button type="button" className="primary" onClick={commit} disabled={!canCommit}>
                 この内容で登録
               </button>
               <button type="button" onClick={reset}>
@@ -160,6 +190,7 @@ export function StepOwnPurchase({
               <tr>
                 <th>商品コード</th>
                 <th>商品名</th>
+                <th>登録</th>
                 <th>集計先</th>
                 <th className="right">期中仕入</th>
                 <th className="right">期末在庫</th>
@@ -172,7 +203,7 @@ export function StepOwnPurchase({
             <tbody>
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="muted">
+                  <td colSpan={10} className="muted">
                     まだ入力がありません。入力しない場合は当月マスタの値がそのまま使われます。
                   </td>
                 </tr>
@@ -183,6 +214,13 @@ export function StepOwnPurchase({
                     <tr key={e.code}>
                       <td className="code">{e.code}</td>
                       <td>{row?.name ?? '—'}</td>
+                      <td>
+                        {row?.isOwnPurchase ? (
+                          <span className="tag-reg">登録済</span>
+                        ) : (
+                          <span className="tag-unreg">登録外</span>
+                        )}
+                      </td>
                       <td>{row?.category ?? '—'}</td>
                       <td className="num">{formatQty(e.purchaseQty)}</td>
                       <td className="num">{formatQty(e.closingQty)}</td>
@@ -207,7 +245,7 @@ export function StepOwnPurchase({
             {entries.length > 0 ? (
               <tfoot>
                 <tr>
-                  <th colSpan={6} className="right">
+                  <th colSpan={7} className="right">
                     合計
                   </th>
                   <th className="right">{formatAmount(totalPurchase)}</th>

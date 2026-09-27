@@ -366,6 +366,8 @@ export class InventoryDatabase {
       code: r.product_code as OwnPurchaseCandidate['code'],
       name: r.product_name,
       category: r.category ?? '',
+      // 履歴に残っている＝過去に自店購入として入力した実績がある品
+      registered: true,
       lastUsedYm: r.last_ym,
       lastUnitPrice: r.unit_price === null ? null : Number(r.unit_price),
     }));

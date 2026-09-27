@@ -179,3 +179,11 @@ table.grid tr.anomaly td { background: var(--blocking-weak); }
 .issue-details li {
   margin-bottom: 2px;
 }
+
+/* 自店購入の候補・入力済み一覧で、登録済みの5品と登録外を見分ける */
+.tag-reg, .tag-unreg {
+  display: inline-block; padding: 1px 6px; margin-right: 6px; border-radius: 10px;
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+}
+.tag-reg { background: var(--accent-weak); color: var(--accent); border: 1px solid var(--accent); }
+.tag-unreg { background: var(--warning-weak); color: var(--warning); border: 1px solid var(--warning); }

@@ -4,7 +4,7 @@
  * 実ファイルが無い環境でも回るよう、合成ブックを基本とする。
  */
 import { describe, it, expect } from 'vitest';
-import { runPipeline } from '@/app/pipeline';
+import { runPipeline, searchOwnPurchaseCandidates } from '@/app/pipeline';
 import { XlsxWorkbook } from '@/xlsx/workbook';
 import { exportWorkbook } from '@/export/exporter';
 import { HQ_MASTER_PROFILE } from '@/ingest/profiles';
@@ -130,6 +130,93 @@ describe('パイプライン通し', () => {
     // 期首(前月期末2) + 仕入24 - 期末2 = 24
     expect(row.usageQty).toBe(24);
     expect(row.usageAmount).toBe(24 * 273);
+  });
+
+  it('登録外の商品にも自店購入を入力でき、I004 ではなく I005 で記録される', async () => {
+    // 発注累計にも登録リストにも無いのに店舗が買った品（2026年7月の炭酸水など）。
+    // 止めずに反映し、あとから追えるよう情報として残す。
+    const f = await makeFiles();
+    const result = await runPipeline({
+      targetYm: '2026-09',
+      master: f.master,
+      previous: f.previous,
+      approveNewOpening: true,
+      ownPurchases: [
+        {
+          code: unsafeProductCode('000140'),
+          purchaseQty: 6,
+          closingQty: 1,
+          unitPrice: 1791,
+          note: '近隣スーパーで購入',
+        },
+      ],
+    });
+
+    const row = result.rows.find((r) => r.code === '000140')!;
+    expect(row.purchaseQty).toBe(6);
+    expect(row.closingQty).toBe(1);
+
+    const i005 = result.issues.filter((i) => i.code === 'I005');
+    expect(i005).toHaveLength(1);
+    expect(i005[0]!.message).toContain('000140');
+    // 備考を理由として残す
+    expect(i005[0]!.message).toContain('近隣スーパーで購入');
+  });
+
+  it('登録済みの自店購入品には I005 を出さない', async () => {
+    const f = await makeFiles();
+    const result = await runPipeline({
+      targetYm: '2026-09',
+      master: f.master,
+      previous: f.previous,
+      approveNewOpening: true,
+      ownPurchases: [
+        { code: unsafeProductCode('A00043'), purchaseQty: 24, closingQty: 2, unitPrice: 273, note: null },
+      ],
+    });
+    expect(result.issues.filter((i) => i.code === 'I005')).toEqual([]);
+  });
+
+  it('備品への自店購入入力は反映せず W024 で知らせる', async () => {
+    // 「備品はこの棚卸表で計算しない」を画面の入力で破らせない。
+    const f = await makeFiles();
+    const result = await runPipeline({
+      targetYm: '2026-09',
+      master: f.master,
+      previous: f.previous,
+      approveNewOpening: true,
+      ownPurchases: [
+        { code: unsafeProductCode('A10005'), purchaseQty: 99, closingQty: 9, unitPrice: 520, note: null },
+      ],
+    });
+
+    const row = result.rows.find((r) => r.code === 'A10005')!;
+    expect(row.purchaseQty).not.toBe(99);
+    expect(row.closingQty).not.toBe(9);
+
+    const w024 = result.issues.filter((i) => i.code === 'W024');
+    expect(w024).toHaveLength(1);
+    expect(w024[0]!.message).toContain('A10005');
+    expect(result.issues.filter((i) => i.code === 'I005')).toEqual([]);
+  });
+
+  it('自店購入の候補は備品を除く全商品で、登録済みが先頭に並ぶ', async () => {
+    const f = await makeFiles();
+    const result = await runPipeline({
+      targetYm: '2026-09',
+      master: f.master,
+      previous: f.previous,
+      approveNewOpening: true,
+    });
+
+    const codes = result.ownPurchaseCandidates.map((c) => c.code as string);
+    expect(codes).toContain('A00043'); // 登録済み
+    expect(codes).toContain('000140'); // 登録外の食材も候補になる
+    expect(codes).not.toContain('A10005'); // 備品は出さない
+
+    const sorted = searchOwnPurchaseCandidates(result.ownPurchaseCandidates, '');
+    expect(sorted[0]!.registered).toBe(true);
+    expect(sorted.at(-1)!.registered).toBe(false);
   });
 
   it('新規商品が未承認なら W004 が出る', async () => {

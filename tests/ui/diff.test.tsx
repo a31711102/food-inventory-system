@@ -140,8 +140,92 @@ describe('M-07 品名の入力中に候補が絞り込まれる（J-5）', () =>
   }, 60000);
 });
 
-describe('M-08 マスタに無い品目は追加できない（J-5）', () => {
-  it('マスタに無い品名では候補が出ず、追加手段も無い', async () => {
+describe('M-07b 登録外の商品も入力できる（要件§10-4）', () => {
+  /** STEP 4 を開いて候補一覧を出すところまで */
+  async function openStep4(): Promise<ReturnType<typeof setupApp>> {
+    const h = setupApp();
+    await importNormalSet(h, set);
+    await goToStep(h, 3);
+    await h.user.click(buttonByText('自店購入入力へ'));
+    await waitFor(() => expect(document.body.textContent).toContain('STEP 4　自店購入入力'));
+    return h;
+  }
+  const candidates = (): HTMLButtonElement[] =>
+    [...document.querySelectorAll<HTMLButtonElement>('.candidate')];
+
+  it('登録済みの5品だけでなく、当月マスタの食材も候補に出る', async () => {
+    await openStep4();
+    const text = candidates()
+      .map((b) => b.textContent ?? '')
+      .join(' / ');
+    expect(text).toContain('A00043'); // 登録済み
+    expect(text).toContain('001250'); // 登録済み
+    expect(text).toContain('000140'); // 登録外の食材
+    expect(text).not.toContain('041303'); // 備品は候補に出さない
+  }, 60000);
+
+  it('登録済みの品が候補の先頭に「登録済」つきで並ぶ', async () => {
+    await openStep4();
+    const list = candidates();
+    expect(list[0]!.textContent).toContain('登録済');
+    expect(list[1]!.textContent).toContain('登録済');
+    expect(list[2]!.textContent).not.toContain('登録済');
+  }, 60000);
+
+  it('登録外を選ぶと理由が必須になり、空のままでは登録できない', async () => {
+    const h = await openStep4();
+    const target = candidates().find((b) => (b.textContent ?? '').includes('000140'))!;
+    await h.user.click(target);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('登録外');
+    });
+    expect(document.body.textContent).toContain('なぜ自店購入として計上するのか');
+    expect(findButton('この内容で登録')?.disabled).toBe(true);
+  }, 60000);
+
+  it('理由を入れれば登録でき、I005 で記録される', async () => {
+    const h = await openStep4();
+    const target = candidates().find((b) => (b.textContent ?? '').includes('000140'))!;
+    await h.user.click(target);
+
+    const fields = [...document.querySelectorAll<HTMLInputElement>('.panel input')];
+    const note = fields.find((f) => f.placeholder === '例: 近隣スーパーで購入')!;
+    fireEvent.change(note, { target: { value: '近隣スーパーで購入' } });
+
+    await waitFor(() => expect(findButton('この内容で登録')?.disabled).toBe(false));
+    await h.user.click(findButton('この内容で登録')!);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('入力済みの自店購入（1 件）');
+    });
+
+    // 情報ログは STEP 2 に出る。
+    // 再計算の完了（STEP 5 への遷移）を待たずにタブを押すと、あとから setStep(5) に上書きされる。
+    await h.user.click(buttonByText('計算して分析へ'));
+    await waitFor(() => expect(document.body.textContent).toContain('STEP 5　分析・出力'));
+    await goToStep(h, 2);
+    await waitFor(() => expect(issuesOf('I005')).toHaveLength(1));
+    expect(issuesOf('I005')[0]!.message).toContain('000140');
+    expect(issuesOf('I005')[0]!.message).toContain('近隣スーパーで購入');
+  }, 60000);
+
+  it('登録済みの品を選んでも理由は求められない', async () => {
+    const h = await openStep4();
+    const target = candidates().find((b) => (b.textContent ?? '').includes('A00043'))!;
+    await h.user.click(target);
+
+    await waitFor(() => expect(findButton('この内容で登録')).not.toBeNull());
+    expect(findButton('この内容で登録')?.disabled).toBe(false);
+    expect(document.body.textContent).not.toContain('なぜ自店購入として計上するのか');
+  }, 60000);
+});
+
+describe('M-08 当月マスタに無い品目は追加できない（J-5）', () => {
+  it('当月マスタに無い品名では候補が出ず、行を作る手段も無い', async () => {
+    // 候補は「登録済みの自店購入品」から「当月マスタの全商品」へ広げたが、
+    // マスタに無い商品の行を画面から作れないことは変えていない。
+    // 帳票の行構成は本部が決めるものであり、店舗側で増やしてよいものではない。
     const h = setupApp();
     await importNormalSet(h, set);
     await goToStep(h, 3);
@@ -149,16 +233,11 @@ describe('M-08 マスタに無い品目は追加できない（J-5）', () => {
     await waitFor(() => expect(document.body.textContent).toContain('STEP 4　自店購入入力'));
 
     const search = document.querySelector<HTMLInputElement>('input[placeholder^="例:"]')!;
-    fireEvent.change(search, { target: { value: 'にんじん' } });
+    fireEvent.change(search, { target: { value: 'このマスタに無い品名' } });
 
     await waitFor(() => {
-      const text = document.body.textContent ?? '';
-      expect(text).not.toContain('A00043');
-      expect(text).not.toContain('001250');
+      expect(document.body.textContent).toContain('該当する品目がありません');
     });
-    expect(document.body.textContent).toContain(
-      'ここに出ない品目は自店購入品として登録されていません',
-    );
     expect(findButton('新しい品目を追加')).toBeNull();
   }, 60000);
 });

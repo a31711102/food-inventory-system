@@ -172,10 +172,13 @@ describe.skipIf(!available)('2026年6月→7月 実データ検証', () => {
   });
 
   describe('期首引継ぎ（6月期末 → 7月期首）', () => {
-    it('7月マスタは期首・期中仕入・期末がすべて空', async () => {
+    it('7月マスタは期首・期中仕入が空で、期末在庫だけ入力済み', async () => {
+      // 当月マスタは「店舗が数えた期末在庫を入力したもの」を渡す運用（設計書§12.1）。
+      // 期首在庫と期中仕入はシステムが埋める列なので、渡された時点では空でなければならない。
       const wb = await XlsxWorkbook.load(new Uint8Array(readFileSync(F.julMaster)));
       const read = readInventorySheet(wb, HQ_MASTER_PROFILE, { fileName: '7月マスタ.xlsx' });
-      expect(read.rows.every((r) => r.openingQty === 0 && r.purchaseQty === 0 && r.closingQty === 0)).toBe(true);
+      expect(read.rows.every((r) => r.openingQty === 0 && r.purchaseQty === 0)).toBe(true);
+      expect(read.rows.some((r) => r.closingQty !== 0)).toBe(true);
     });
 
     it('継続商品の期首がすべて6月の期末と一致する', () => {

@@ -301,9 +301,11 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   const ownPurchaseCandidates = buildOwnPurchaseCandidates(rows);
   if (input.ownPurchases?.length) {
     const byCode = new Map(input.ownPurchases.map((o) => [o.code as string, o]));
+    // 備品への入力は反映しない。「備品はこの棚卸表で計算しない」を画面の入力で破らせないため。
+    const supplyEntries = rows.filter((r) => r.isSupply && byCode.has(r.code));
     rows = rows.map((row) => {
       const entry = byCode.get(row.code);
-      if (!entry) return row;
+      if (!entry || row.isSupply) return row;
       return {
         ...row,
         purchaseQty: entry.purchaseQty,
@@ -311,11 +313,29 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         unitPrice: entry.unitPrice,
       };
     });
+    issues.addMany('W024',
+      supplyEntries.map((r) => ({ ref: { productCode: r.code }, text: `${r.code} ${r.name}` })),
+      (n, d) =>
+        `備品 ${n} 件に自店購入が入力されましたが、反映していません（${summarize(d)}）。備品はこの棚卸表で計算しない取り決めです。食材であればコードが誤っていないか確認してください。`,
+      { fileName: input.master.fileName });
+
     const missingOwn = input.ownPurchases
       .filter((o) => !rows.some((r) => r.code === o.code))
       .map((o) => ({ ref: { productCode: o.code }, text: `${o.code}` }));
     issues.addMany('W021', missingOwn, (n, d) =>
       `自店購入で指定された商品 ${n} 件が当月マスタにありません（${summarize(d)}）。本部へAコードの登録を依頼してください。`,
+      { fileName: input.master.fileName });
+
+    // 登録外の品目への入力は止めないが、後から追える形で残す。
+    // 登録リストの更新漏れなのか、その月限りの購入なのかを翌月に判断できるようにする。
+    const unregistered = rows
+      .filter((r) => !r.isSupply && !r.isOwnPurchase && byCode.has(r.code))
+      .map((r) => {
+        const note = byCode.get(r.code)?.note;
+        return { ref: { productCode: r.code }, text: `${r.code} ${r.name}${note ? `（${note}）` : ''}` };
+      });
+    issues.addMany('I005', unregistered, (n, d) =>
+      `自店購入品として登録されていない ${n} 件に期中仕入を入力しました（${summarize(d)}）。毎月続くようであれば、自店購入品の登録を本部・店舗オーナーに依頼してください。`,
       { fileName: input.master.fileName });
   }
 
@@ -375,14 +395,24 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   };
 }
 
-/** 自店購入の候補（当月マスタの A コード行）。品名の部分一致検索の母集合になる。 */
+/**
+ * 自店購入の候補。品名の部分一致検索の母集合になる。
+ *
+ * 棚卸対象の全商品を候補にする。登録済みの自店購入品だけに絞っていたが、
+ * 発注累計にも登録リストにも無い品を店舗が実際に買っており、
+ * その分の期中仕入を入力する手段が無かった（要件§10-4）。
+ *
+ * 備品だけは除く。「備品はこの棚卸表で計算しない」が確定ルールであり、
+ * ここから入力できると期中仕入に入ってしまい、そのルールを破るため。
+ */
 export function buildOwnPurchaseCandidates(rows: readonly ProductRow[]): OwnPurchaseCandidate[] {
   return rows
-    .filter((r) => r.isOwnPurchase)
+    .filter((r) => !r.isSupply)
     .map((r) => ({
       code: r.code,
       name: r.name,
       category: r.category,
+      registered: r.isOwnPurchase,
       lastUsedYm: null,
       lastUnitPrice: r.unitPrice || null,
     }));
@@ -399,10 +429,12 @@ export function searchOwnPurchaseCandidates(
   limit = 50,
 ): OwnPurchaseCandidate[] {
   const key = query.trim().toLowerCase();
-  if (key === '') return [...candidates].slice(0, limit);
-  return candidates
-    .filter((c) => c.name.trim().toLowerCase().includes(key))
+  const hit = key === '' ? [...candidates] : candidates.filter((c) => c.name.trim().toLowerCase().includes(key));
+  // 登録済みの自店購入品を先頭に出す。母集合が全商品になったため、
+  // 毎月入力する5品が候補の奥に埋もれないようにする。
+  return hit
     .sort((a, b) => {
+      if (a.registered !== b.registered) return a.registered ? -1 : 1;
       const ay = a.lastUsedYm ?? '';
       const by = b.lastUsedYm ?? '';
       if (ay !== by) return by.localeCompare(ay);
