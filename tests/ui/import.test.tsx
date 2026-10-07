@@ -138,6 +138,22 @@ describe('M-04 取込結果の要約が正しい（J-1）', () => {
   });
 });
 
+describe('M-01b 当月マスタに期末在庫が要ることを STEP 1 で伝える', () => {
+  it('ファイル選択の前に、期末在庫を入力してから上げるよう書いてある', () => {
+    setupApp();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('期末在庫を入力してからアップロードしてください');
+    expect(text).toContain('本部から届いたままのファイルは期末在庫が空です');
+    // 何が起きるかまで書く（「そのまま入れても動くのでは」と思わせない）
+    expect(text).toContain('使用高と原価率が大きく過大になります');
+  });
+
+  it('入力するのは期末在庫だけだと分かる', () => {
+    setupApp();
+    expect(document.body.textContent).toContain('期首在庫と期中仕入はシステムが埋めるので');
+  });
+});
+
 describe('M-04b STEP 2 で期中仕入が反映済みだと分かる', () => {
   it('反映済みの商品数と合計金額を示す', async () => {
     // プレビューの先頭3行がたまたま発注のない商品だと「期中仕入が0＝取り込めていない」

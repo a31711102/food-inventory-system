@@ -61,6 +61,7 @@ export const ISSUE_CATALOG = {
   // --- 自店購入・備品 ---
   W021: { level: 'WARNING', title: '自店購入品が当月マスタにない' },
   W024: { level: 'WARNING', title: '備品に自店購入を入力' },
+  W025: { level: 'WARNING', title: '当月マスタの期末在庫が未入力' },
   I004: { level: 'INFO', title: '備品を計算対象外にした' },
   I005: { level: 'INFO', title: '登録外の品目に自店購入を入力' },
 

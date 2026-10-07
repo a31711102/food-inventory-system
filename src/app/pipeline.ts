@@ -152,6 +152,18 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   });
   issues.addAll(master.issues);
 
+  // 当月マスタは「店舗が数えた期末在庫を入力したもの」を渡す運用（設計書§12.1）。
+  // 本部から届いたままのファイルは期末在庫が空で、そのまま取り込むと
+  // 期首在庫と期中仕入を全量使い切った計算になり、使用高と原価率が大きく過大になる。
+  // 1件も入っていなければ入力漏れとみなす。全商品の実在庫が0になることは実務上ありえない。
+  if (master.rows.length > 0 && master.rows.every((r) => r.closingQty === 0)) {
+    issues.add(
+      'W025',
+      `当月本部マスタの期末在庫が ${master.rows.length} 商品すべて0です。店舗が数えた期末在庫を入力してから指定してください。このまま進めると、期首在庫と期中仕入を全量使い切った計算になり、使用高と原価率が大きく過大になります。`,
+      { fileName: input.master.fileName, sheetName: master.resolved.sheetName },
+    );
+  }
+
   // --- 2. 前月食品棚卸表 ---
   let previousEntries: PreviousMonthEntry[] = [];
   let previousReport: ReportValues | null = null;

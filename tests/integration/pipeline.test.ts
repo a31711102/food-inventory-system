@@ -219,6 +219,36 @@ describe('パイプライン通し', () => {
     expect(sorted.at(-1)!.registered).toBe(false);
   });
 
+  it('当月マスタの期末在庫がすべて0なら W025 で知らせる', async () => {
+    // 本部から届いたままのファイルを入れてしまう事故。期首＋仕入を全量使い切った
+    // 計算になり、原価率が大きく過大になる。
+    const f = await makeFiles({
+      master: SAMPLE_ROWS.map((r) => ({ ...r, openingQty: 0, purchaseQty: 0, closingQty: 0 })),
+    });
+    const result = await runPipeline({
+      targetYm: '2026-09',
+      master: f.master,
+      previous: f.previous,
+      approveNewOpening: true,
+    });
+
+    const w025 = result.issues.filter((i) => i.code === 'W025');
+    expect(w025).toHaveLength(1);
+    expect(w025[0]!.message).toContain('期末在庫');
+    expect(w025[0]!.message).toContain('すべて0');
+  });
+
+  it('期末在庫が1件でも入っていれば W025 は出ない', async () => {
+    const f = await makeFiles();
+    const result = await runPipeline({
+      targetYm: '2026-09',
+      master: f.master,
+      previous: f.previous,
+      approveNewOpening: true,
+    });
+    expect(result.issues.filter((i) => i.code === 'W025')).toEqual([]);
+  });
+
   it('新規商品が未承認なら W004 が出る', async () => {
     const f = await makeFiles({
       master: [...SAMPLE_ROWS, { code: '009999', name: '新商品', category: '01.ソース', unitPrice: 100, closingQty: 1 }],
