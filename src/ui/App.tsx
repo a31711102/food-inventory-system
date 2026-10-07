@@ -55,7 +55,14 @@ export default function App(): JSX.Element {
     loadImportHistory(),
   );
 
-  const recalc = useCallback(async () => {
+  /**
+   * 再計算。
+   *
+   * `overrides` は「状態を更新した直後に、その値で計算し直したい」ときに使う。
+   * setState は非同期なので、直後に recalc() を呼ぶと古い値で計算してしまう
+   * （換算係数を登録しても画面が変わらない、という形で現れていた）。
+   */
+  const recalc = useCallback(async (overrides?: { confirmedFactors?: Map<string, number> }) => {
     if (!files.master) return;
     setRunning(true);
     setError(null);
@@ -67,7 +74,7 @@ export default function App(): JSX.Element {
         orders: files.orders,
         unitMaster: files.unitMaster,
         ownPurchases,
-        confirmedFactors,
+        confirmedFactors: overrides?.confirmedFactors ?? confirmedFactors,
         approvedOpeningCodes: approvedCodes,
         importHistory,
         totalSalesOverride,
@@ -147,7 +154,7 @@ export default function App(): JSX.Element {
       {stale && result ? (
         <div className="panel" style={{ borderColor: 'var(--warning)', background: 'var(--warning-weak)' }}>
           入力ファイルまたは対象年月が変更されました。前回の計算結果は無効です。
-          <button type="button" className="primary" style={{ marginLeft: 12 }} onClick={recalc} disabled={running}>
+          <button type="button" className="primary" style={{ marginLeft: 12 }} onClick={() => void recalc()} disabled={running}>
             再計算する
           </button>
         </div>
@@ -177,7 +184,13 @@ export default function App(): JSX.Element {
           approvedCodes={approvedCodes}
           onApprove={(codes) => setApprovedCodes(codes)}
           confirmedFactors={confirmedFactors}
-          onConfirmFactors={setConfirmedFactors}
+          onConfirmFactors={async (factors) => {
+            setConfirmedFactors(factors);
+            // 登録した係数で即座に計算し直す。そうしないと画面が何も変わらず、
+            // 登録できたのか操作者が判断できない。
+            await recalc({ confirmedFactors: factors });
+          }}
+          running={running}
           onNext={() => setStep(4)}
         />
       ) : null}

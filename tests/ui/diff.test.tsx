@@ -91,6 +91,62 @@ describe('M-06 承認するとW004が消える（J-4）', () => {
   }, 60000);
 });
 
+describe('M-06b 換算係数を登録したことが画面で分かる', () => {
+  /** 換算係数の入力欄（STEP 3 の新規商品パネル） */
+  const factorInputs = (): HTMLInputElement[] =>
+    [...document.querySelectorAll<HTMLInputElement>('input[type=number]')];
+
+  it('登録前は未登録の新規商品がパネルに出ている', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+    await goToStep(h, 3);
+
+    expect(document.body.textContent).toContain('新規商品の換算係数');
+    expect(issuesOf('W019')).toHaveLength(1);
+    expect(factorInputs().length).toBeGreaterThan(0);
+  }, 60000);
+
+  it('登録ボタンに件数が出て、押すと結果と次の導線が表示される', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+    await goToStep(h, 3);
+
+    // 何件登録されるのかがボタンに出ている
+    const btn = [...document.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').startsWith('この内容で登録'),
+    ) as HTMLButtonElement;
+    expect(btn.textContent).toMatch(/この内容で登録（\d+ 件）/);
+
+    await h.user.click(btn);
+
+    // 押しても何も変わらない、が元の不具合。登録件数と次の導線が出ること
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('換算係数');
+      expect(document.body.textContent).toContain('を登録しました');
+    });
+    expect(findButton('次へ：自店購入入力')).not.toBeNull();
+  }, 60000);
+
+  it('登録すると再計算が走り、W019 が消えて期中仕入に反映される', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+    await goToStep(h, 3);
+    expect(issuesOf('W019')).toHaveLength(1);
+
+    const btn = [...document.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').startsWith('この内容で登録'),
+    ) as HTMLButtonElement;
+    await h.user.click(btn);
+
+    // 登録済みの行はパネルから消える（＝再計算が走った証拠）
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('を登録しました');
+    });
+    await goToStep(h, 2);
+    await waitFor(() => expect(issuesOf('W019')).toEqual([]));
+  }, 60000);
+});
+
 describe('M-07 品名の入力中に候補が絞り込まれる（J-5）', () => {
   it('入力前は自店購入2件が候補に出る', async () => {
     const h = setupApp();

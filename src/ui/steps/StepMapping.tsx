@@ -1,5 +1,6 @@
 import { Panel, IssueList, IssueBadges, Note } from '../components';
 import type { PipelineResult } from '../../app/pipeline';
+import { formatAmount } from '../format';
 
 export function StepMapping({
   result,
@@ -15,6 +16,17 @@ export function StepMapping({
   const codeTypeCount = result.issues
     .filter((i) => i.code === 'I001')
     .reduce((sum, i) => sum + i.count, 0);
+
+  // 期中仕入は発注累計照会からこの時点で反映済み。自店購入だけが STEP 4 待ちになる。
+  // プレビューの先頭3行がたまたま発注のない商品だと「反映されていない」と誤解されるため、
+  // 全体の件数・金額を示し、プレビューも仕入のある行を優先して並べる。
+  const purchasedRows = result.rows.filter((r) => r.purchaseQty > 0);
+  const purchaseAmount = purchasedRows.reduce((sum, r) => sum + r.purchaseQty * r.unitPrice, 0);
+  const ownPurchasePending = result.rows.filter((r) => r.isOwnPurchase && r.purchaseQty === 0).length;
+  const previewRows = [
+    ...purchasedRows.slice(0, 3),
+    ...result.rows.filter((r) => r.purchaseQty <= 0).slice(0, Math.max(0, 3 - purchasedRows.length)),
+  ];
 
   return (
     <>
@@ -42,7 +54,8 @@ export function StepMapping({
             <div className="kpi-label">発注明細</div>
             <div className="kpi-value">{result.orderLines.length} 行</div>
             <div className="kpi-note">
-              換算不能 {result.orderLines.filter((l) => l.convertedQty === null).length} 行
+              換算不能 {result.orderLines.filter((l) => l.convertedQty === null).length} 行／
+              期中仕入に反映 {purchasedRows.length} 商品
             </div>
           </div>
           <div className="kpi">
@@ -59,7 +72,23 @@ export function StepMapping({
           </Note>
         ) : null}
 
-        <h3>取込プレビュー（先頭3行）</h3>
+        <Note>
+          <strong>期中仕入は、発注累計照会からこの時点ですでに反映されています</strong>
+          （{purchasedRows.length} 商品・合計 {formatAmount(purchaseAmount)} 円）。
+          発注のなかった商品は 0 のままで、これは正常です。
+          {ownPurchasePending > 0 ? (
+            <>
+              {' '}
+              ただし<strong>自店購入品 {ownPurchasePending} 件</strong>は発注累計に現れないため、
+              まだ 0 です。これらは STEP 4 で入力したあとに入ります。
+            </>
+          ) : null}
+        </Note>
+
+        <h3>
+          取込プレビュー（
+          {purchasedRows.length > 0 ? '期中仕入のある行を優先して3行' : '先頭3行'}）
+        </h3>
         <div className="scroll">
           <table className="grid">
             <thead>
@@ -75,7 +104,7 @@ export function StepMapping({
               </tr>
             </thead>
             <tbody>
-              {result.rows.slice(0, 3).map((r) => (
+              {previewRows.map((r) => (
                 <tr key={r.code}>
                   <td className="code">{r.code}</td>
                   <td>{r.name}</td>

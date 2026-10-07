@@ -11,18 +11,22 @@ export function StepDiff({
   onApprove,
   confirmedFactors,
   onConfirmFactors,
+  running,
   onNext,
 }: {
   result: PipelineResult;
   approvedCodes: Set<string>;
   onApprove: (codes: Set<string>) => void;
   confirmedFactors: Map<string, number>;
-  onConfirmFactors: (factors: Map<string, number>) => void;
+  onConfirmFactors: (factors: Map<string, number>) => void | Promise<void>;
+  running: boolean;
   onNext: () => void;
 }): JSX.Element {
   const [filter, setFilter] = useState<Filter>('ALL');
   const [query, setQuery] = useState('');
   const [draftFactors, setDraftFactors] = useState<Record<string, string>>({});
+  /** 登録直後の結果。押しても画面が変わらないと登録できたか分からないため表示する */
+  const [registered, setRegistered] = useState<{ count: number; reflected: number } | null>(null);
 
   const pending = result.factorConfirmations;
   const pendingWithOrder = pending.filter((f) => f.hasOrder);
@@ -34,15 +38,22 @@ export function StepDiff({
     return suggested === null ? '' : String(suggested);
   };
 
-  const commitFactors = (): void => {
+  /** 入力欄が埋まっていて、値として使える行 */
+  const registrable = pending.filter((f) => {
+    const raw = factorValue(f.code, f.suggestedFactor);
+    const n = Number(raw);
+    return raw !== '' && Number.isFinite(n) && n > 0;
+  });
+
+  const commitFactors = async (): Promise<void> => {
     const next = new Map(confirmedFactors);
-    for (const f of pending) {
-      const raw = factorValue(f.code, f.suggestedFactor);
-      const n = Number(raw);
-      if (raw !== '' && Number.isFinite(n) && n > 0) next.set(f.code, n);
-    }
-    onConfirmFactors(next);
+    for (const f of registrable) next.set(f.code, Number(factorValue(f.code, f.suggestedFactor)));
     setDraftFactors({});
+    setRegistered({
+      count: registrable.length,
+      reflected: registrable.filter((f) => f.hasOrder).length,
+    });
+    await onConfirmFactors(next);
   };
 
   const nameChanged = result.productDiffs.filter((d) => d.nameChanged);
@@ -229,6 +240,32 @@ export function StepDiff({
         </div>
       </Panel>
 
+      {registered && pending.length === 0 ? (
+        <Panel title="新規商品の換算係数" hint="登録が完了しました。">
+          <Note>
+            換算係数 <strong>{registered.count} 件</strong>を登録しました。
+            {registered.reflected > 0 ? (
+              <>
+                {' '}
+                うち <strong>{registered.reflected} 件</strong>は当月に発注があり、
+                <strong>期中仕入に反映済み</strong>です。
+              </>
+            ) : (
+              ' 当月に発注はないため、次月以降に使われます。'
+            )}
+            {' '}登録した係数は単位計算マスタより優先され、履歴に保存されます。
+          </Note>
+          <div className="actions">
+            <button type="button" className="primary" onClick={onNext}>
+              次へ：自店購入入力
+            </button>
+            <span className="muted">
+              反映後の期中仕入は STEP 5 の商品別比較で確認できます。
+            </span>
+          </div>
+        </Panel>
+      ) : null}
+
       {pending.length > 0 ? (
         <Panel
           title="新規商品の換算係数"
@@ -297,8 +334,13 @@ export function StepDiff({
           </div>
 
           <div className="actions">
-            <button type="button" className="primary" onClick={commitFactors}>
-              この内容で登録
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void commitFactors()}
+              disabled={running || registrable.length === 0}
+            >
+              {running ? '登録して再計算中…' : `この内容で登録（${registrable.length} 件）`}
             </button>
             <span className="muted">
               登録した係数は単位計算マスタより優先され、履歴に保存されて次月以降も使われます。

@@ -138,43 +138,87 @@ describe('M-04 取込結果の要約が正しい（J-1）', () => {
   });
 });
 
-describe('対象年月と発注累計の突合（E004）', () => {
-  it('対象年月を直さないと E004 で止まる', async () => {
-    // 既定の対象年月（前月）のまま取り込むと、発注累計の集計期間(2026-09)と食い違う。
-    // 手順書 §2.2 で対象年月を 2026-09 に設定させているのはこのため。
+describe('M-04b STEP 2 で期中仕入が反映済みだと分かる', () => {
+  it('反映済みの商品数と合計金額を示す', async () => {
+    // プレビューの先頭3行がたまたま発注のない商品だと「期中仕入が0＝取り込めていない」
+    // と誤解される。全体の件数と金額を出して、反映済みであることを示す。
     const h = setupApp();
+    await importNormalSet(h, set);
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('期中仕入は、発注累計照会からこの時点ですでに反映されています');
+    expect(text).toContain('4 商品');
+    expect(text).toContain('発注のなかった商品は 0 のままで、これは正常です');
+  }, 60000);
+
+  it('自店購入はSTEP4待ちであることを区別して書く', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('自店購入品 2 件');
+    expect(text).toContain('STEP 4 で入力したあとに入ります');
+  }, 60000);
+
+  it('プレビューは期中仕入のある行を優先して出す', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+
+    expect(document.body.textContent).toContain('取込プレビュー（期中仕入のある行を優先して3行）');
+    // 先頭行の期中仕入が 0 でない（元の不具合では 000140 の 0 が最初に出ていた）
+    const first = document.querySelectorAll('.grid tbody tr')[0]!;
+    const cells = [...first.querySelectorAll('td')].map((c) => c.textContent ?? '');
+    expect(cells[6]).not.toBe('0');
+  }, 60000);
+
+  it('発注累計を指定しなければ、反映済みとは書かない', async () => {
+    const h = setupApp();
+    await setTargetYm(h, TARGET_YM);
+    await selectFile(h, 'master', set.master);
+    await selectFile(h, 'previous', set.previous);
+    await selectFile(h, 'unitMaster', set.unitMaster);
+    await runImport(h);
+
+    expect(document.body.textContent).toContain('取込プレビュー（先頭3行）');
+  }, 60000);
+});
+
+describe('対象年月と発注累計の突合（E004）', () => {
+  /**
+   * テストデータの月（2026-09）と必ず食い違う月。
+   * 既定値は「今日の前月」で月が替わるたびに動くため、既定のままに頼ると
+   * 実行する月によってテストが通ったり落ちたりする（実際 2026-10 に落ちた）。
+   * 食い違いは明示的に作る。
+   */
+  const WRONG_YM = '2026-06';
+
+  async function importWithWrongYm(): Promise<ReturnType<typeof setupApp>> {
+    const h = setupApp();
+    await setTargetYm(h, WRONG_YM);
     await selectFile(h, 'master', set.master);
     await selectFile(h, 'previous', set.previous);
     await selectFile(h, 'orders', set.orders);
     await selectFile(h, 'unitMaster', set.unitMaster);
     await runImport(h);
+    return h;
+  }
 
+  it('対象年月が発注累計の月と違うと E004 で止まる', async () => {
+    await importWithWrongYm();
     expect(badgeCounts().blocking).toBe(1);
     expect(document.body.textContent).toContain('発注累計照会の集計期間が対象年月と一致しません');
   }, 60000);
 
   it('E004 のメッセージが、対象年月を直す道を示している', async () => {
-    const h = setupApp();
-    await selectFile(h, 'master', set.master);
-    await selectFile(h, 'previous', set.previous);
-    await selectFile(h, 'orders', set.orders);
-    await selectFile(h, 'unitMaster', set.unitMaster);
-    await runImport(h);
-
+    await importWithWrongYm();
     // 「ファイルが違う」だけでなく「対象年月を変える」も提示されていないと、
     // 過去の月をやり直そうとした人はここで詰まる。
     expect(document.body.textContent).toContain(`対象年月を ${TARGET_YM} に変更`);
   }, 60000);
 
-  it('対象年月を合わせれば、既定の月でなくても処理できる', async () => {
-    // 報告された事象の再現と回復。既定は「前月」だが、
-    // 対象年月をファイルに合わせれば任意の月を処理できる（固定ではない）。
-    const h = setupApp();
-    await selectFile(h, 'master', set.master);
-    await selectFile(h, 'previous', set.previous);
-    await selectFile(h, 'orders', set.orders);
-    await selectFile(h, 'unitMaster', set.unitMaster);
-    await runImport(h);
+  it('対象年月を合わせれば処理できる（過去の月もやり直せる）', async () => {
+    // 報告された事象の再現と回復。対象年月は固定値ではない。
+    const h = await importWithWrongYm();
     expect(badgeCounts().blocking).toBe(1);
 
     await setTargetYm(h, TARGET_YM);
