@@ -130,8 +130,10 @@ export async function exportWorkbook(
         workbook.setNumber(sheetName, `${iCol}${row.lineNo}`, row.openingQty);
         written += 1;
       }
-      // 単価は自店購入（Aコード）のみ書き戻す。本部商品の単価はマスタの値を正とする。
-      if (kCol && row.isOwnPurchase) {
+      // 単価は STEP 4 で入力した商品だけ書き戻す。本部商品の単価はマスタの値を正とする。
+      // 自店購入の候補を全商品へ広げたので「Aコードなら」では判定できない。
+      // 登録済みの自店購入品は、入力が無くてもマスタの単価をそのまま書き戻す（従来どおり）。
+      if (kCol && (row.isOwnPurchase || row.unitPriceFromInput === true)) {
         workbook.setNumber(sheetName, `${kCol}${row.lineNo}`, row.unitPrice);
         written += 1;
       }

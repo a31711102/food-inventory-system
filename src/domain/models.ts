@@ -35,6 +35,12 @@ export interface ProductRow {
 
   status: ProductStatus;
   isOwnPurchase: boolean;
+  /**
+   * 単価を STEP 4（自店購入入力）で上書きしたか。
+   * 自店購入の候補を全商品へ広げたため、登録済みの5品以外でも単価が入りうる。
+   * 出力Excelへ単価を書き戻すかの判断に使う。
+   */
+  unitPriceFromInput?: boolean;
   /** 備品（食材以外）。コードの数値部が5桁。棚卸の計算対象外（要件§10-2） */
   isSupply: boolean;
   /** 新規商品の期首0を管理者が承認したか。未承認のまま出力できない（W004）。 */

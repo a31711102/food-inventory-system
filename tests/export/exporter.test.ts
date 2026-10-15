@@ -117,6 +117,31 @@ describe('書き戻し内容', () => {
     expect(out.cell('入力用', `K${own.lineNo}`)?.value).toBe(own.unitPrice);
   });
 
+  it('STEP 4 で単価を入れた登録外の商品も、単価を書き戻す', async () => {
+    // 自店購入の候補を全商品へ広げたので「Aコードなら書き戻す」では足りない。
+    // 書き戻さないと、画面の使用高と出力Excelの使用高が食い違う。
+    const input = await prepare();
+    const target = input.rows.find((r) => r.code === '000140')!;
+    const rows = input.rows.map((r) =>
+      r.code === '000140' ? { ...r, unitPrice: 9999, unitPriceFromInput: true } : r,
+    );
+    const out = await XlsxWorkbook.load((await exportWorkbook({ ...input, rows })).bytes);
+
+    expect(out.cell('入力用', `K${target.lineNo}`)?.value).toBe(9999);
+  });
+
+  it('入力していない本部商品の単価は書き換えない', async () => {
+    // フラグが無ければ、行の単価が違っていてもマスタの値を残す。
+    // 本部商品の単価はマスタを正とするため。
+    const input = await prepare();
+    const target = input.rows.find((r) => r.code === '000158')!;
+    expect(target.isOwnPurchase).toBe(false);
+    const rows = input.rows.map((r) => (r.code === '000158' ? { ...r, unitPrice: 9999 } : r));
+    const out = await XlsxWorkbook.load((await exportWorkbook({ ...input, rows })).bytes);
+
+    expect(out.cell('入力用', `K${target.lineNo}`)?.value).toBe(1194);
+  });
+
   it('当月売上高を分析用 C4 に書き戻す', async () => {
     const input = await prepare();
     const out = await XlsxWorkbook.load((await exportWorkbook(input)).bytes);

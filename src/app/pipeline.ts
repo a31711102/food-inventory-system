@@ -323,6 +323,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         purchaseQty: entry.purchaseQty,
         closingQty: entry.closingQty,
         unitPrice: entry.unitPrice,
+        // 画面で入れた単価は出力Excelにも書き戻す。
+        // 書き戻さないと、画面の使用高と出力Excelの使用高が食い違う。
+        unitPriceFromInput: true,
       };
     });
     issues.addMany('W024',
