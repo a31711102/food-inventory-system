@@ -10,7 +10,7 @@
  * 書いた文字列をそのまま読み戻す方針とする（Number 化は読み出し側で明示的に行う）。
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
@@ -170,6 +170,66 @@ CREATE TABLE IF NOT EXISTS audit_log (
   at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_audit_run ON audit_log (run_id);
+
+-- ===== リアル売上算出（要件§11.7）。金額・料率は十進表記の TEXT（倍精度を経由しない） =====
+
+-- 月次の売上（処理ランごと）。method = manual（分析用 C4 ＝ 総計1）/ real（リアル売上）
+CREATE TABLE IF NOT EXISTS rs_monthly (
+  run_id               INTEGER PRIMARY KEY REFERENCES processing_run(run_id) ON DELETE CASCADE,
+  target_ym            TEXT    NOT NULL,
+  method               TEXT    NOT NULL,
+  adopted_sales        TEXT,
+  original_c4          TEXT,
+  gross_total          TEXT,
+  fee_total            TEXT,
+  container_qty        INTEGER,
+  container_qty_source TEXT,
+  container_qty_reason TEXT,
+  container_price      TEXT,
+  container_cost       TEXT,
+  real_sales           TEXT,
+  confirmed_at         TEXT,
+  actor_role           TEXT,
+  -- 確定時に適用したマスタ（後でマスタを編集しても、この月の計算根拠は残る）
+  masters_json         TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_rs_monthly_ym ON rs_monthly (target_ym);
+
+-- 月次のチャネル明細（適用料率と算出手数料）
+CREATE TABLE IF NOT EXISTS rs_monthly_channel (
+  run_id     INTEGER NOT NULL REFERENCES processing_run(run_id) ON DELETE CASCADE,
+  channel_id TEXT    NOT NULL,
+  label      TEXT    NOT NULL,
+  sales      TEXT    NOT NULL,
+  rate       TEXT    NOT NULL,
+  fee        TEXT    NOT NULL,
+  PRIMARY KEY (run_id, channel_id)
+);
+
+-- 読取値と確定値（監査用）。OCR の候補をどう直したかを残す
+CREATE TABLE IF NOT EXISTS rs_reading (
+  run_id      INTEGER NOT NULL REFERENCES processing_run(run_id) ON DELETE CASCADE,
+  field       TEXT    NOT NULL,
+  ocr_value   TEXT,
+  final_value TEXT,
+  source      TEXT,
+  edited      INTEGER NOT NULL DEFAULT 0
+);
+
+-- 入力ファイルの指紋。写真そのものは保存しない（確定-08）
+CREATE TABLE IF NOT EXISTS rs_input_file (
+  run_id    INTEGER NOT NULL REFERENCES processing_run(run_id) ON DELETE CASCADE,
+  kind      TEXT    NOT NULL,
+  file_name TEXT    NOT NULL,
+  sha256    TEXT    NOT NULL
+);
+
+-- 料率・容器単価マスタの写し（別のPCで .db を開いたときに復元する）
+CREATE TABLE IF NOT EXISTS rs_master_snapshot (
+  snapshot_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+  saved_at     TEXT    NOT NULL,
+  masters_json TEXT    NOT NULL
+);
 `;
 
 export const AUDIT_ACTIONS = [

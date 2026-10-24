@@ -24,7 +24,7 @@ describe('InventoryDatabase', () => {
   });
 
   it('スキーマを作成しバージョンを記録する', () => {
-    expect(db.getMeta('schema_version')).toBe('2');
+    expect(db.getMeta('schema_version')).toBe('3');
   });
 
   describe('永続化（本物のSQLiteファイル）', () => {
@@ -276,5 +276,67 @@ describe('InventoryDatabase', () => {
 
       expect(db.listAudit(runId)).toHaveLength(0);
     });
+  });
+});
+
+describe('リアル売上の記録（要件§11.7）', () => {
+  // 値はすべて架空
+  const confirmed = {
+    realSales: '1164465.105',
+    grossTotal: '1234567',
+    feeTotal: '59901.895',
+    containerQty: 255,
+    containerCost: '10200',
+    confirmedAt: '2026-10-01T00:00:00Z',
+    detail: {
+      channels: [
+        { channelId: 'menu', label: 'menu', sales: '2345', rate: '0.2', fee: '469' },
+        { channelId: 'sharedeli', label: 'シェアデリ', sales: '30003', rate: '0.275', fee: '8250.825' },
+      ],
+      containerPrice: '40',
+      containerQtySource: 'csv' as const,
+      containerQtyReason: null,
+      readings: [
+        { field: '総計1（税抜値割引前）', ocrValue: '0234567', finalValue: '1234567', source: 'corrected', edited: false },
+        { field: '値割引合計', ocrValue: '1000', finalValue: '1001', source: 'checked', edited: true },
+      ],
+      files: [{ kind: 'photo' as const, fileName: 'j.jpg', sha256: 'a'.repeat(64) }],
+      masters: { channels: [], ignoredPayments: ['ナカペイ'], containerPrices: [], extractRules: [] },
+    },
+  };
+
+  it('リアル売上の月は、確定値・チャネル明細・読取値と確定値・ファイルの指紋を残す', async () => {
+    const db = await open();
+    const runId = db.createRun('2026-09');
+    db.saveSales(runId, '2026-09', { method: 'real', adoptedSales: 1164465.105, originalC4: 1234567, confirmed, actorRole: 'ADMIN' });
+    const s = db.getSales(runId);
+    expect(s.monthly).toMatchObject({ method: 'real', real_sales: '1164465.105', fee_total: '59901.895', container_qty: 255, original_c4: '1234567' });
+    expect(s.channels.map((c) => [c.channel_id, c.fee])).toEqual([['menu', '469'], ['sharedeli', '8250.825']]);
+    expect(s.readings.find((r) => r.field === '総計1（税抜値割引前）')).toMatchObject({ ocr_value: '0234567', final_value: '1234567', source: 'corrected' });
+    expect(s.readings.find((r) => r.field === '値割引合計')!.edited).toBe(1);
+    expect(s.files).toHaveLength(1);
+  });
+
+  it('手入力方式の月も、方式だけは記録する', async () => {
+    const db = await open();
+    const runId = db.createRun('2026-08');
+    db.saveSales(runId, '2026-08', { method: 'manual', adoptedSales: 1234567, originalC4: 1234567, confirmed: null, actorRole: 'ADMIN' });
+    expect(db.salesMethodOf('2026-08')).toBe('manual');
+    expect(db.salesMethodOf('2026-07')).toBeNull();
+  });
+
+  it('同じ月を処理し直したら、いちばん新しい版の方式を返す', async () => {
+    const db = await open();
+    db.saveSales(db.createRun('2026-09'), '2026-09', { method: 'manual', adoptedSales: 1, originalC4: 1, confirmed: null, actorRole: 'ADMIN' });
+    db.saveSales(db.createRun('2026-09'), '2026-09', { method: 'real', adoptedSales: 1, originalC4: 1, confirmed, actorRole: 'ADMIN' });
+    expect(db.salesMethodOf('2026-09')).toBe('real');
+  });
+
+  it('マスタの写しを保存し、別のPCで開いたときに復元できる', async () => {
+    const db = await open();
+    const m = { channels: [{ id: 'menu', name: 'menu', aliases: ['menu'], rate: '0.2', validFrom: '2000-01', validTo: null }], ignoredPayments: [], containerPrices: [], extractRules: [] };
+    db.saveMastersSnapshot(m);
+    const reopened = await open(db.export());
+    expect(reopened.latestMasters()).toEqual(m);
   });
 });

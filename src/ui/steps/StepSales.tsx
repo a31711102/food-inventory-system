@@ -19,6 +19,8 @@ import { channelRow, EPOCH_YM, KNOWN_CHANNELS, resolveMasters, type RealSalesMas
 import { importMastersFromWorkbook } from '../../domain/realSales/masterImport';
 import { extractContainerQty, readProductSalesCsv } from '../../domain/realSales/productSalesCsv';
 import { mapFields, type FieldReading, type JournalOcrResult, type LabelGroup, type ReceivableReading } from '../../ocr/journalOcr';
+import { sha256Hex } from '../../ingest/fileIdentity';
+import type { RealSalesDetail } from '../../domain/realSales/sales';
 
 const yen = (f: Fixed | string | null | undefined): string => {
   if (f === null || f === undefined || f === '') return '—';
@@ -252,6 +254,30 @@ function RealSalesForm({
   const doConfirm = async (): Promise<void> => {
     if (!b) return;
     confirmedSig.current = signature;
+    // 監査用に、OCR の読取値（多数決）と確定値、どれを手で直したかを残す（要件§11.7）
+    const ocrValue = (f: FieldReading | undefined): string | null => f?.candidates.find((c) => !c.derived)?.value ?? null;
+    const readings: RealSalesDetail['readings'] = [
+      ...(Object.keys(FIELD_LABELS) as FieldKey[]).map((k) => ({
+        field: FIELD_LABELS[k],
+        ocrValue: ocrValue(fields?.[k]),
+        finalValue: journal[k] ?? null,
+        source: fields?.[k]?.source ?? 'manual',
+        edited: edits[k] !== undefined,
+      })),
+      ...journal.receivables.map((l, i) => {
+        const f = fields?.receivables[i];
+        return {
+          field: `売掛内訳:${l.label}`,
+          ocrValue: ocrValue(f),
+          finalValue: l.amount,
+          source: f ? `${f.source}/${f.labelBy}` : 'manual',
+          edited: edits[`recv:${i}:amount`] !== undefined || edits[`recv:${i}:label`] !== undefined || !f,
+        };
+      }),
+    ];
+    const files: RealSalesDetail['files'] = [];
+    if (photo) files.push({ kind: 'photo', fileName: photo.fileName, sha256: await sha256Hex(photo.bytes) });
+    if (csv) files.push({ kind: 'csv', fileName: csv.fileName, sha256: await sha256Hex(csv.bytes) });
     await onConfirm({
       realSales: toDecimalString(b.realSales),
       grossTotal: toDecimalString(b.grossTotal),
@@ -259,6 +285,15 @@ function RealSalesForm({
       containerQty: b.containerQty,
       containerCost: toDecimalString(b.containerCost),
       confirmedAt: new Date().toISOString(),
+      detail: {
+        channels: b.channels.map((c) => ({ channelId: c.channelId, label: c.label, sales: toDecimalString(c.sales), rate: c.rateText, fee: toDecimalString(c.fee) })),
+        containerPrice: b.containerPriceText || toDecimalString(b.containerPrice),
+        containerQtySource: b.containerQtySource,
+        containerQtyReason: manualQty.on ? manualQty.reason.trim() : null,
+        readings,
+        files,
+        masters,
+      },
     });
   };
 

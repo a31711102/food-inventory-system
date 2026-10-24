@@ -11,6 +11,8 @@ import { SCHEMA_SQL, SCHEMA_VERSION, type AuditAction, type RunState } from './s
 import type { ProductRow, ReportValues, OwnPurchaseCandidate } from '../domain/models';
 import type { ValidationIssue } from '../domain/issues';
 import type { ImportedFileRecord } from '../ingest/fileIdentity';
+import type { ConfirmedRealSales, SalesMethod } from '../domain/realSales/sales';
+import type { RealSalesMasters } from '../domain/realSales/masters';
 
 export type SqlValue = string | number | Uint8Array | null;
 
@@ -53,6 +55,8 @@ export class InventoryDatabase {
       this.addColumnIfMissing('validation_issue', 'details_json', 'TEXT');
       this.setMeta('schema_version', '2');
     }
+    // v3: リアル売上のテーブル。CREATE TABLE IF NOT EXISTS で作られるので版だけ上げる
+    if (Number(this.getMeta('schema_version')) < 3) this.setMeta('schema_version', '3');
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
@@ -371,6 +375,90 @@ export class InventoryDatabase {
       lastUsedYm: r.last_ym,
       lastUnitPrice: r.unit_price === null ? null : Number(r.unit_price),
     }));
+  }
+
+  // -------------------------------------------------------------------------
+  // リアル売上（要件§11.7）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 月次の売上を保存する。手入力方式の月も方式だけは残す（要件§11.8
+   * 「リアル売上機能を使わない月は明示的に手入力方式として記録する」）。
+   */
+  saveSales(
+    runId: number,
+    targetYm: string,
+    rec: { method: SalesMethod; adoptedSales: number | null; originalC4: number | null; confirmed: ConfirmedRealSales | null; actorRole: string },
+  ): void {
+    const c = rec.confirmed;
+    const d = c?.detail;
+    this.run(
+      `INSERT OR REPLACE INTO rs_monthly
+         (run_id, target_ym, method, adopted_sales, original_c4, gross_total, fee_total, container_qty, container_qty_source,
+          container_qty_reason, container_price, container_cost, real_sales, confirmed_at, actor_role, masters_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        runId, targetYm, rec.method,
+        rec.adoptedSales === null ? null : String(rec.adoptedSales),
+        rec.originalC4 === null ? null : String(rec.originalC4),
+        c?.grossTotal ?? null, c?.feeTotal ?? null, c?.containerQty ?? null,
+        d?.containerQtySource ?? null, d?.containerQtyReason ?? null, d?.containerPrice ?? null,
+        c?.containerCost ?? null, c?.realSales ?? null, c?.confirmedAt ?? null, rec.actorRole,
+        d ? JSON.stringify(d.masters) : null,
+      ],
+    );
+    if (!d) return;
+    for (const ch of d.channels) {
+      this.run(
+        'INSERT OR REPLACE INTO rs_monthly_channel (run_id, channel_id, label, sales, rate, fee) VALUES (?, ?, ?, ?, ?, ?)',
+        [runId, ch.channelId, ch.label, ch.sales, ch.rate, ch.fee],
+      );
+    }
+    for (const r of d.readings) {
+      this.run(
+        'INSERT INTO rs_reading (run_id, field, ocr_value, final_value, source, edited) VALUES (?, ?, ?, ?, ?, ?)',
+        [runId, r.field, r.ocrValue, r.finalValue, r.source, r.edited ? 1 : 0],
+      );
+    }
+    for (const f of d.files) {
+      this.run('INSERT INTO rs_input_file (run_id, kind, file_name, sha256) VALUES (?, ?, ?, ?)', [runId, f.kind, f.fileName, f.sha256]);
+    }
+  }
+
+  getSales(runId: number): { monthly: Record<string, SqlValue> | null; channels: Array<Record<string, SqlValue>>; readings: Array<Record<string, SqlValue>>; files: Array<Record<string, SqlValue>> } {
+    return {
+      monthly: this.select<Record<string, SqlValue>>('SELECT * FROM rs_monthly WHERE run_id = ?', [runId])[0] ?? null,
+      channels: this.select<Record<string, SqlValue>>('SELECT * FROM rs_monthly_channel WHERE run_id = ? ORDER BY channel_id', [runId]),
+      readings: this.select<Record<string, SqlValue>>('SELECT * FROM rs_reading WHERE run_id = ?', [runId]),
+      files: this.select<Record<string, SqlValue>>('SELECT * FROM rs_input_file WHERE run_id = ?', [runId]),
+    };
+  }
+
+  /**
+   * 対象年月の売上の算出方式。最終確定版があればそれ、無ければいちばん新しい版。
+   * 記録が無ければ null（呼び出し側は手入力方式とみなす。これまでの C4 は総計1）。
+   */
+  salesMethodOf(targetYm: string): SalesMethod | null {
+    const row = this.select<{ method: string }>(
+      `SELECT m.method FROM rs_monthly m JOIN processing_run r ON r.run_id = m.run_id
+        WHERE m.target_ym = ? ORDER BY r.is_final DESC, r.revision DESC LIMIT 1`,
+      [targetYm],
+    )[0];
+    return row ? (row.method as SalesMethod) : null;
+  }
+
+  saveMastersSnapshot(m: RealSalesMasters): void {
+    this.run('INSERT INTO rs_master_snapshot (saved_at, masters_json) VALUES (?, ?)', [new Date().toISOString(), JSON.stringify(m)]);
+  }
+
+  latestMasters(): RealSalesMasters | null {
+    const row = this.select<{ masters_json: string }>('SELECT masters_json FROM rs_master_snapshot ORDER BY snapshot_id DESC LIMIT 1')[0];
+    if (!row) return null;
+    try {
+      return JSON.parse(row.masters_json) as RealSalesMasters;
+    } catch {
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------------

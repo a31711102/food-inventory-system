@@ -70,7 +70,7 @@ describe('M-20 新規作成と保存（J-14）', () => {
     expect(new TextDecoder().decode(bytes.slice(0, 15))).toBe('SQLite format 3');
 
     const db = await InventoryDatabase.open(bytes);
-    expect(db.getMeta('schema_version')).toBe('2');
+    expect(db.getMeta('schema_version')).toBe('3');
     db.close();
   }, 60000);
 

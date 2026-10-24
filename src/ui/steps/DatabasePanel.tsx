@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Panel, Note } from '../components';
 import { InventoryDatabase } from '../../storage/db';
+import type { ConfirmedRealSales, SalesMethod } from '../../domain/realSales/sales';
+import type { RealSalesMasters } from '../../domain/realSales/masters';
 import {
   detectStorageMode,
   pickDatabaseForSave,
@@ -26,10 +28,19 @@ export function DatabasePanel({
   result,
   targetYm,
   role,
+  realSales,
+  masters,
+  onOpened,
 }: {
   result: PipelineResult | null;
   targetYm: string;
   role: Role;
+  /** 確定したリアル売上（リアル売上方式の月）。保存時に月次実績として残す */
+  realSales?: ConfirmedRealSales | null;
+  /** 料率・容器単価マスタ。保存時に写しを残し、別のPCで開いたときに復元できるようにする */
+  masters?: RealSalesMasters;
+  /** .db を開いたとき、保存されているマスタと月ごとの売上算出方式を画面へ渡す */
+  onOpened?: (info: { masters: RealSalesMasters | null; methods: Record<string, SalesMethod> }) => void;
 }): JSX.Element {
   const [mode] = useState<StorageMode>(() => detectStorageMode());
   const [handle, setHandle] = useState<Handle>(null);
@@ -37,6 +48,17 @@ export function DatabasePanel({
   const [status, setStatus] = useState<string>('未接続');
   const [busy, setBusy] = useState(false);
   const [runs, setRuns] = useState<Array<Record<string, unknown>>>([]);
+
+  const notifyOpened = (opened: InventoryDatabase): void => {
+    if (!onOpened) return;
+    const months = [...new Set(opened.listRuns().map((r) => String(r.target_ym)))];
+    const methods: Record<string, SalesMethod> = {};
+    for (const ym of months) {
+      const m = opened.salesMethodOf(ym);
+      if (m) methods[ym] = m;
+    }
+    onOpened({ masters: opened.latestMasters(), methods });
+  };
 
   useEffect(() => {
     void (async () => {
@@ -47,6 +69,7 @@ export function DatabasePanel({
           const opened = await InventoryDatabase.open(bytes, locateFile);
           setHandle(saved);
           setDb(opened);
+          notifyOpened(opened);
           setRuns(opened.listRuns() as Array<Record<string, unknown>>);
           setStatus(`接続済み: ${saved.name}`);
         } catch (e) {
@@ -64,6 +87,7 @@ export function DatabasePanel({
       await writeToHandle(h, opened.export());
       setHandle(h);
       setDb(opened);
+          notifyOpened(opened);
       setRuns([]);
       setStatus(`接続済み: ${h.name}（新規作成）`);
     } catch (e) {
@@ -80,6 +104,7 @@ export function DatabasePanel({
       const opened = await InventoryDatabase.open(await readFromHandle(h), locateFile);
       setHandle(h);
       setDb(opened);
+          notifyOpened(opened);
       setRuns(opened.listRuns() as Array<Record<string, unknown>>);
       setStatus(`接続済み: ${h.name}`);
     } catch (e) {
@@ -98,6 +123,15 @@ export function DatabasePanel({
       db.saveReport(runId, result.report);
       db.saveIssues(runId, result.issues);
       db.saveImportFiles(runId, result.importedFiles);
+      // 売上の算出方式は手入力の月も残す。リアル売上の月は確定値・チャネル明細・読取値・ファイルの指紋も残す
+      db.saveSales(runId, targetYm, {
+        method: result.sales.method,
+        adoptedSales: result.sales.adopted,
+        originalC4: result.sales.masterC4,
+        confirmed: result.sales.method === 'real' ? realSales ?? null : null,
+        actorRole: role,
+      });
+      if (masters && masters.channels.length > 0) db.saveMastersSnapshot(masters);
       db.setRunState(runId, result.hasBlocking ? 'CALCULATED' : 'EXPORTED');
       db.audit('CALCULATE', {
         runId,

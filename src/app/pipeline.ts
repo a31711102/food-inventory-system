@@ -37,6 +37,8 @@ import type {
   OwnPurchaseInput,
   OwnPurchaseCandidate,
 } from '../domain/models';
+import type { ConfirmedRealSales, SalesMethod } from '../domain/realSales/sales';
+export type { ConfirmedRealSales, SalesMethod } from '../domain/realSales/sales';
 
 export interface UploadedFile {
   fileName: string;
@@ -63,18 +65,6 @@ export interface FactorConfirmation {
   orderQty: number | null;
 }
 
-/** 確定したリアル売上（売上確定の画面で確定したもの）。金額は十進表記 */
-export interface ConfirmedRealSales {
-  realSales: string;
-  grossTotal: string;
-  feeTotal: string;
-  containerQty: number;
-  containerCost: string;
-  confirmedAt: string;
-}
-
-/** 売上の算出方式（要件§11）。manual はこれまでどおり分析用 C4（＝総計1）を使う */
-export type SalesMethod = 'manual' | 'real';
 
 export interface SalesSelection {
   method: SalesMethod;

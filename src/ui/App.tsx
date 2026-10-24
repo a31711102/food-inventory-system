@@ -285,7 +285,20 @@ export default function App(): JSX.Element {
         />
       ) : null}
 
-      <DatabasePanel result={result} targetYm={targetYm} role={role} />
+      <DatabasePanel
+        result={result}
+        targetYm={targetYm}
+        role={role}
+        realSales={realSalesConfirmed}
+        masters={masters}
+        onOpened={({ masters: saved, methods }) => {
+          // 別のPCで .db を開いたときにも、料率と過去月の算出方式を引き継ぐ
+          if (saved && saved.channels.length > 0 && masters.channels.length === 0) setMasters(saved);
+          const merged = { ...salesHistory };
+          for (const [ym, m] of Object.entries(methods)) merged[ym] = { ...(merged[ym] ?? {}), method: m };
+          setSalesHistory(merged);
+        }}
+      />
 
       <footer className="muted" style={{ fontSize: 12, padding: '8px 4px 24px' }}>
         すべての処理はこのブラウザ内で完結します。取り込んだファイルや原価データが外部へ送信されることはありません。
