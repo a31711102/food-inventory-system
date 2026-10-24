@@ -30,3 +30,6 @@ Thumbs.db
 
 # 発注累計照会など実データを含むCSVも公開しない
 *.csv
+
+# OCR の部品（scripts/copy-ocr-assets.mjs が node_modules から作る）
+public/ocr/

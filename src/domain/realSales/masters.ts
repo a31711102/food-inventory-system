@@ -106,7 +106,7 @@ export const DEFAULT_EXTRACT_RULE: ExtractRule = {
  */
 export const DEFAULT_MASTERS: RealSalesMasters = {
   channels: [],
-  ignoredPayments: ['ナカペイ', 'モバイル・C', 'wechatPay', 'AEONPay'],
+  ignoredPayments: ['ナカペイ', 'モバイル・C'],
   containerPrices: [],
   extractRules: [DEFAULT_EXTRACT_RULE],
 };
