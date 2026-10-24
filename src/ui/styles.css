@@ -187,3 +187,34 @@ table.grid tr.anomaly td { background: var(--blocking-weak); }
 }
 .tag-reg { background: var(--accent-weak); color: var(--accent); border: 1px solid var(--accent); }
 .tag-unreg { background: var(--warning-weak); color: var(--warning); border: 1px solid var(--warning); }
+
+/* ---- STEP 5 売上確定 ---- */
+.method-choice { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 4px 0 16px; }
+.method {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.method.active { border-color: var(--accent); background: var(--accent-weak); }
+.method input { margin-top: 4px; }
+
+/* 写真の該当行。原寸だと表が横に伸びて値の欄が見えなくなるので、縮小して並べる */
+.ocr-table td { vertical-align: middle; }
+.ocr-crop {
+  display: block; width: 460px; max-width: 46vw; height: auto;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff;
+}
+.tag-plain {
+  display: inline-block; padding: 1px 6px; margin-right: 6px; border-radius: 10px;
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+  border: 1px solid var(--border); color: var(--muted); background: var(--surface);
+}
+.small { font-size: 12px; }
+.breakdown { max-width: 680px; margin-top: 12px; }
+.breakdown tr.total th, .breakdown tr.total td { border-top: 2px solid var(--accent); font-size: 15px; }
+.photo-view { margin-top: 8px; }
+.photo-view img { display: block; max-width: 100%; height: auto; margin-top: 8px; border: 1px solid var(--border); }
+.file-button {
+  display: inline-block; padding: 6px 12px; cursor: pointer; font-size: 13px;
+  border: 1px solid var(--accent); border-radius: var(--radius); color: var(--accent); background: var(--surface);
+}
+.ocr-table td:last-child { min-width: 240px; }

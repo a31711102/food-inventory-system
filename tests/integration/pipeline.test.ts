@@ -521,3 +521,81 @@ describe('新規商品の期首承認（W004）', () => {
     expect(after.issues.filter((i) => i.code === 'W004')).toEqual([]);
   });
 });
+
+describe('売上の算出方式（要件§11 リアル売上）', () => {
+  // 値はすべて架空。合成ブックの分析用 C4 は 5,000,000
+  const confirmed = {
+    realSales: '4567890.123',
+    grossTotal: '4800000',
+    feeTotal: '222109.877',
+    containerQty: 250,
+    containerCost: '10000',
+    confirmedAt: '2026-10-01T00:00:00Z',
+  };
+
+  it('手入力方式（既定）では従来どおり C4 を使い、方式の指摘は出ない', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, previous: f.previous, approveNewOpening: true });
+    expect(r.sales.method).toBe('manual');
+    expect(r.report.totalSales).toBe(5_000_000);
+    expect(r.issues.filter((i) => ['E017', 'I006', 'W030'].includes(i.code))).toEqual([]);
+  });
+
+  it('リアル売上方式で未確定なら E017（出力できない）', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, approveNewOpening: true, sales: { method: 'real', confirmed: null } });
+    expect(r.issues.map((i) => i.code)).toContain('E017');
+    expect(r.hasBlocking).toBe(true);
+  });
+
+  it('確定したリアル売上を原価率の分母にし、C4 の元値との差を I006 で記録する', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, approveNewOpening: true, sales: { method: 'real', confirmed } });
+    expect(r.report.totalSales).toBe(4567890.123);
+    const i006 = r.issues.find((i) => i.code === 'I006')!;
+    expect(i006.message).toContain('5,000,000');
+    expect(i006.message).toContain('4,567,890.123');
+  });
+
+  it('目安（40%）との比較用に、総計1を分母にした原価率も出す', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, approveNewOpening: true, sales: { method: 'real', confirmed } });
+    expect(r.sales.grossBasedCostRatePercent).toBeCloseTo((r.report.costAfterLoss! / 4_800_000) * 100, 10);
+    // 総計1 はリアル売上より大きいので、同じ原価に対して率の絶対値は小さくなる
+    expect(Math.abs(r.sales.grossBasedCostRatePercent!)).toBeLessThan(Math.abs(r.report.costRateAfterLossPercent!));
+  });
+
+  it('前月（手入力）と方式が違えば W030 で比較に注記する', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, previous: f.previous, approveNewOpening: true, sales: { method: 'real', confirmed } });
+    expect(r.sales.methodDiffers).toBe(true);
+    expect(r.issues.find((i) => i.code === 'W030')!.message).toContain('前月は手入力（総計1）、当月はリアル売上');
+  });
+
+  it('前月もリアル売上なら W030 は出ない', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, previous: f.previous, approveNewOpening: true, sales: { method: 'real', confirmed }, previousSalesMethod: 'real' });
+    expect(r.issues.filter((i) => i.code === 'W030')).toEqual([]);
+  });
+
+  it('RS-06 出力Excelの分析用 C4 にリアル売上が丸めずに入り、数式は残る', async () => {
+    const f = await makeFiles();
+    const r = await runPipeline({ targetYm: '2026-09', master: f.master, approveNewOpening: true, sales: { method: 'real', confirmed } });
+    const out = await exportWorkbook({
+      workbook: r.masterWorkbook,
+      profile: HQ_MASTER_PROFILE,
+      targetYm: '2026-09',
+      previousYm: null,
+      rows: r.rows,
+      report: r.report,
+      productDiffs: r.productDiffs,
+      reportDiffs: r.reportDiffs,
+      anomalies: r.anomalies,
+      issues: r.issues,
+    });
+    const reopened = await XlsxWorkbook.load(out.bytes);
+    expect(reopened.cell('分析用', 'C4')?.value).toBe(4567890.123);
+    const row = r.rows[0]!;
+    expect(reopened.cell('入力用', `J${row.lineNo}`)?.formula).toBe(`SUM(H${row.lineNo}:I${row.lineNo})-G${row.lineNo}`);
+  });
+});

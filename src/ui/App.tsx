@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
-import { runPipeline, previousYm, type PipelineResult, type UploadedFile } from '../app/pipeline';
+import { runPipeline, previousYm, type ConfirmedRealSales, type PipelineResult, type SalesMethod, type UploadedFile } from '../app/pipeline';
 import type { OwnPurchaseInput } from '../domain/models';
 import { defaultTargetYm } from './format';
 import { StepUpload } from './steps/StepUpload';
@@ -8,6 +8,9 @@ import { StepMapping } from './steps/StepMapping';
 import { StepDiff } from './steps/StepDiff';
 import { StepOwnPurchase } from './steps/StepOwnPurchase';
 import { StepAnalyze } from './steps/StepAnalyze';
+import { StepSales } from './steps/StepSales';
+import type { RealSalesMasters } from '../domain/realSales/masters';
+import { loadMasters, loadSalesHistory, recordSales, saveMasters, type SalesHistoryEntry } from '../storage/realSalesStore';
 import { DatabasePanel } from './steps/DatabasePanel';
 import type { FileKind, ImportedFileRecord } from '../ingest/fileIdentity';
 import { appendImportHistory, loadImportHistory } from '../storage/importHistory';
@@ -26,8 +29,9 @@ const STEPS = [
   { id: 1, label: '月次処理開始', short: 'ファイル取込' },
   { id: 2, label: '列設定と取込結果', short: '列の対応確認' },
   { id: 3, label: '商品差分確認', short: '新規・削除' },
-  { id: 4, label: '自店購入入力', short: '4品の入力' },
-  { id: 5, label: '分析・出力', short: '比較とダウンロード' },
+  { id: 4, label: '自店購入入力', short: '発注外の仕入' },
+  { id: 5, label: '売上確定', short: '手入力／リアル売上' },
+  { id: 6, label: '分析・出力', short: '比較とダウンロード' },
 ] as const;
 
 export default function App(): JSX.Element {
@@ -45,6 +49,19 @@ export default function App(): JSX.Element {
   const [confirmedFactors, setConfirmedFactors] = useState<Map<string, number>>(new Map());
   const [totalSalesOverride, setTotalSalesOverride] = useState<number | null>(null);
   const [lossAmountOverride, setLossAmountOverride] = useState<number | null>(null);
+  /** 売上の算出方式（要件§11）。前回使った方式を初期値にする */
+  const [salesHistory, setSalesHistory] = useState<Record<string, SalesHistoryEntry>>(() => loadSalesHistory());
+  const [salesMethod, setSalesMethod] = useState<SalesMethod>(() => {
+    const h = loadSalesHistory();
+    const latest = Object.keys(h).sort().pop();
+    return latest ? h[latest]!.method : 'manual';
+  });
+  const [realSalesConfirmed, setRealSalesConfirmed] = useState<ConfirmedRealSales | null>(null);
+  const [masters, setMastersState] = useState<RealSalesMasters>(() => loadMasters());
+  const setMasters = useCallback((m: RealSalesMasters) => {
+    setMastersState(m);
+    saveMasters(m);
+  }, []);
   const [result, setResult] = useState<PipelineResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +79,7 @@ export default function App(): JSX.Element {
    * setState は非同期なので、直後に recalc() を呼ぶと古い値で計算してしまう
    * （換算係数を登録しても画面が変わらない、という形で現れていた）。
    */
-  const recalc = useCallback(async (overrides?: { confirmedFactors?: Map<string, number> }) => {
+  const recalc = useCallback(async (overrides?: { confirmedFactors?: Map<string, number>; realSales?: ConfirmedRealSales | null }) => {
     if (!files.master) return;
     setRunning(true);
     setError(null);
@@ -79,6 +96,11 @@ export default function App(): JSX.Element {
         importHistory,
         totalSalesOverride,
         lossAmountOverride,
+        sales: {
+          method: salesMethod,
+          confirmed: overrides?.realSales !== undefined ? overrides.realSales : realSalesConfirmed,
+        },
+        previousSalesMethod: salesHistory[previousYm(targetYm)]?.method ?? 'manual',
         approveNewOpening: false,
       });
       setResult(next);
@@ -93,13 +115,26 @@ export default function App(): JSX.Element {
     }
     // importHistory は判定に使うだけで、更新をトリガに再計算しない
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, targetYm, ownPurchases, confirmedFactors, totalSalesOverride, lossAmountOverride, approvedCodes]);
+  }, [files, targetYm, ownPurchases, confirmedFactors, totalSalesOverride, lossAmountOverride, approvedCodes, salesMethod, realSalesConfirmed, salesHistory]);
 
   // 入力が変わったら結果を無効化する
   useEffect(() => {
     if (result) setStale(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files.master, files.previous, files.orders, files.unitMaster, targetYm]);
+
+  // 対象年月・マスタ・方式が変わったら、確定したリアル売上は取り消す（再確定を求める。要件§11.6-8）
+  useEffect(() => {
+    setRealSalesConfirmed(null);
+  }, [targetYm, masters, salesMethod]);
+
+  /** 前月のリアル売上（大幅変動の警告 W031 に使う） */
+  const previousReal = (() => {
+    const p = salesHistory[previousYm(targetYm)];
+    return p?.method === 'real' && p.realSales && p.feeTotal && p.containerQty !== undefined
+      ? { targetYm: previousYm(targetYm), realSales: p.realSales, feeTotal: p.feeTotal, containerQty: p.containerQty }
+      : null;
+  })();
 
   const canProceed = useMemo(() => Boolean(result) && !stale, [result, stale]);
 
@@ -209,6 +244,32 @@ export default function App(): JSX.Element {
       ) : null}
 
       {step === 5 && result ? (
+        <StepSales
+          targetYm={targetYm}
+          role={role}
+          method={salesMethod}
+          onSetMethod={setSalesMethod}
+          masters={masters}
+          onSetMasters={setMasters}
+          confirmed={realSalesConfirmed}
+          onConfirm={async (c) => {
+            setRealSalesConfirmed(c);
+            setSalesHistory(recordSales(targetYm, { method: 'real', realSales: c.realSales, feeTotal: c.feeTotal, containerQty: c.containerQty, confirmedAt: c.confirmedAt }));
+            await recalc({ realSales: c });
+          }}
+          onUnconfirm={() => setRealSalesConfirmed(null)}
+          previous={previousReal}
+          masterC4={result.analysis.totalSales}
+          onNext={async () => {
+            if (salesMethod === 'manual') setSalesHistory(recordSales(targetYm, { method: 'manual' }));
+            await recalc();
+            setStep(6);
+          }}
+          running={running}
+        />
+      ) : null}
+
+      {step === 6 && result ? (
         <StepAnalyze
           result={result}
           role={role}

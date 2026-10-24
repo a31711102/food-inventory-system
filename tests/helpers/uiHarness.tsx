@@ -230,7 +230,7 @@ export async function runImport(h: Harness): Promise<void> {
   );
 }
 
-export async function goToStep(h: Harness, step: 1 | 2 | 3 | 4 | 5): Promise<void> {
+export async function goToStep(h: Harness, step: 1 | 2 | 3 | 4 | 5 | 6): Promise<void> {
   const tab = stepTabs()[step - 1];
   if (!tab) throw new Error(`STEPタブが見つかりません: ${step}`);
   await h.user.click(tab);
@@ -242,10 +242,12 @@ export async function advanceToAnalyze(h: Harness): Promise<void> {
   await goToStep(h, 3);
   await clickAndSettle(h, buttonByText('自店購入入力へ'));
   await waitFor(() => expect(document.body.textContent).toContain('STEP 4　自店購入入力'));
+  await clickAndSettle(h, buttonByText('次へ：売上確定'));
+  await waitFor(() => expect(document.body.textContent).toContain('STEP 5　売上確定'));
   await clickAndSettle(h, buttonByText('計算して分析へ'));
   await waitFor(
     () => {
-      expect(document.body.textContent).toContain('STEP 5　分析・出力');
+      expect(document.body.textContent).toContain('STEP 6　分析・出力');
       expect(findButton('完成Excelをダウンロード')).not.toBeNull();
     },
     { timeout: 20000 },

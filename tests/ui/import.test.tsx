@@ -32,15 +32,15 @@ describe('M-01 取込前はSTEP2以降が開けない（J-1）', () => {
   it('STEP 2〜5 のタブが押せない', () => {
     setupApp();
     const tabs = stepTabs();
-    expect(tabs).toHaveLength(5);
+    expect(tabs).toHaveLength(6);
     expect(tabs[0]!.disabled).toBe(false);
-    expect(tabs.slice(1).map((t) => t.disabled)).toEqual([true, true, true, true]);
+    expect(tabs.slice(1).map((t) => t.disabled)).toEqual([true, true, true, true, true]);
   });
 
   it('取込後はすべてのタブが開く', async () => {
     const h = setupApp();
     await importNormalSet(h, set);
-    expect(stepTabs().map((t) => t.disabled)).toEqual([false, false, false, false, false]);
+    expect(stepTabs().map((t) => t.disabled)).toEqual([false, false, false, false, false, false]);
   }, 60000);
 });
 
@@ -81,7 +81,7 @@ describe('M-03 ファイルを変えると結果が無効になる（J-2）', ()
     });
     expect(findButton('再計算する')).not.toBeNull();
 
-    await goToStep(h, 5);
+    await goToStep(h, 6);
     expect(findButton('完成Excelをダウンロード')?.disabled).toBe(true);
   }, 60000);
 
@@ -266,7 +266,7 @@ describe('対象年月の指定場所（固定値ではないと分かること�
   it('入力欄は STEP 1 だけ。他のステップではヘッダから STEP 1 へ戻す', async () => {
     const h = setupApp();
     await importNormalSet(h, set);
-    await goToStep(h, 5);
+    await goToStep(h, 6);
 
     expect(document.querySelector('input[type=month]')).toBeNull();
     const back = findButton('STEP 1 で変更');

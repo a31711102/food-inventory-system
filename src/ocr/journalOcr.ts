@@ -442,28 +442,35 @@ export function solveReceivables(items: FieldReading[], total: FieldReading): vo
   // 2. 1項目だけの誤読。合計との差が「1桁の違い」だと、5桁以上のどの項目を直しても
   //    成立してしまう（差が 30,000 なら menu も ナカペイ も候補になる）。
   //    そこで、複数の前処理で読みが割れていた項目を誤読とみなす。割れていたのが1つだけのときに限る
+  //    売掛合計そのものも誤読されうるので、合計は多数決の上位3候補まで試す
+  //    （項目と合計が同時に誤読されたとき、合計の2位の候補が正しいことがある）
   const tops = items.map((f) => f.candidates[0]!.value);
-  const tTop = total.candidates[0]!.value;
   const sumTops = tops.reduce((a, v) => a + BigInt(v), 0n);
   const share = (f: FieldReading): number => f.candidates[0]!.votes / f.candidates.reduce((a, c) => a + c.votes, 0);
-  const fixes: { k: number; v: string; share: number; changed: number }[] = [];
-  items.forEach((f, k) => {
-    const v = BigInt(tTop) - (sumTops - BigInt(tops[k]!));
-    if (v > 0n && closeDigits(tops[k]!, v.toString())) fixes.push({ k, v: v.toString(), share: share(f), changed: changedDigits(tops[k]!, v.toString()) });
+  const fixes: { k: number; v: string; total: string; share: number; changed: number; totalRank: number }[] = [];
+  total.candidates.slice(0, 3).forEach((tc, totalRank) => {
+    items.forEach((f, k) => {
+      const v = BigInt(tc.value) - (sumTops - BigInt(tops[k]!));
+      if (v > 0n && closeDigits(tops[k]!, v.toString())) {
+        fixes.push({ k, v: v.toString(), total: tc.value, share: share(f), changed: changedDigits(tops[k]!, v.toString()), totalRank });
+      }
+    });
   });
   const totalFix = sumTops.toString();
-  if (closeDigits(tTop, totalFix)) fixes.push({ k: -1, v: totalFix, share: share(total), changed: changedDigits(tTop, totalFix) });
+  const tTop = total.candidates[0]!.value;
+  if (closeDigits(tTop, totalFix)) fixes.push({ k: -1, v: totalFix, total: totalFix, share: share(total), changed: changedDigits(tTop, totalFix), totalRank: 0 });
   if (fixes.length === 0) return;
-  // 直す桁が少ないものを優先し、同じなら読みが割れていたものを選ぶ
+  // 直す桁が少ないものを優先し、同じなら読みが割れていたもの、合計の候補順位が高いものを選ぶ
   const fewest = Math.min(...fixes.map((f) => f.changed));
-  const pool = fixes.filter((f) => f.changed === fewest).sort((a, b) => a.share - b.share);
+  const pool = fixes.filter((f) => f.changed === fewest).sort((a, b) => a.share - b.share || a.totalRank - b.totalRank);
   const pick = pool[0]!;
-  // いちばん割れていた項目が、次点よりはっきり割れているときだけ採用する
-  if (pool.length > 1 && pool[1]!.share - pick.share < 0.3) return;
+  // いちばん割れていた項目が、次点よりはっきり割れているときだけ採用する（同じ項目の別解は除く）
+  const rival = pool.find((f) => f.k !== pick.k);
+  if (rival && rival.share - pick.share < 0.3) return;
   if (pick.k >= 0) {
     const values = [...tops];
     values[pick.k] = pick.v;
-    applyAll(items, total, values, tTop);
+    applyAll(items, total, values, pick.total);
   } else {
     applyAll(items, total, tops, totalFix);
   }

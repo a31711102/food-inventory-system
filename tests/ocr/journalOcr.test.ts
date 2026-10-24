@@ -88,6 +88,16 @@ describe('検算①（売掛合計）で内訳の誤読を正す', () => {
     expect(items[1]!.source).toBe('checked');
   });
 
+  it('項目と売掛合計が同時に誤読されても、合計の2位の候補を使って直す', () => {
+    // 正しくは 51111 + 12345 + 45678 = 109134。合計は 109100 と誤読され、正しい値は2位
+    const items = [field(['21111', 3], ['21171', 2]), field(['12345', 6]), field(['45678', 6])];
+    const total = field(['109100', 3], ['109134', 2]);
+    solveReceivables(items, total);
+    expect(items[0]!.value).toBe('51111');
+    expect(total.value).toBe('109134');
+    expect(total.source).toBe('corrected');
+  });
+
   it('どの項目を直すべきか決められなければ、何も変えない（人に委ねる）', () => {
     const items = [field(['21111', 6]), field(['12345', 6])];
     const total = field(['63456', 6]);

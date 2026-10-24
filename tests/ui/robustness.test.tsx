@@ -87,7 +87,7 @@ describe('M-26 壊れたファイルを入れる（J-16）', () => {
     });
     // ヘッダとSTEPタブは生きている
     expect(document.body.textContent).toContain('食品棚卸月次処理システム');
-    expect(stepTabs()).toHaveLength(5);
+    expect(stepTabs()).toHaveLength(6);
   }, 60000);
 
   it('正しいファイルを入れ直せば復帰する', async () => {
@@ -116,7 +116,7 @@ describe('M-26 壊れたファイルを入れる（J-16）', () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain('処理中にエラーが発生しました');
     });
-    expect(stepTabs()).toHaveLength(5);
+    expect(stepTabs()).toHaveLength(6);
   }, 60000);
 });
 

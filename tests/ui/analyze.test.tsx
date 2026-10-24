@@ -138,7 +138,7 @@ describe('M-14 ロール切替で表示が変わる（J-13）', () => {
     fireEvent.change(roleSelect, { target: { value: 'STAFF' } });
 
     await waitFor(() => expect(roleSelect.value).toBe('STAFF'));
-    expect(document.body.textContent).toContain('STEP 5　分析・出力');
+    expect(document.body.textContent).toContain('STEP 6　分析・出力');
     expect(document.querySelectorAll('.panel').length).toBeGreaterThan(0);
   }, 60000);
 
@@ -155,7 +155,7 @@ describe('M-14 ロール切替で表示が変わる（J-13）', () => {
     fireEvent.change(roleSelect, { target: { value: 'ADMIN' } });
     await waitFor(() => expect(roleSelect.value).toBe('ADMIN'));
 
-    expect(document.body.textContent).toContain('STEP 5　分析・出力');
+    expect(document.body.textContent).toContain('STEP 6　分析・出力');
   }, 60000);
 });
 
