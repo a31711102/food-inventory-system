@@ -20,12 +20,38 @@ export interface MonthlyExpected {
   saladVegetableUsage: number;
 }
 
+/** リアル売上算出の実データ期待値（要件§11.10 RS-01〜03） */
+export interface RealSalesExpected {
+  /** 写真から読み取った値（人が確認したもの） */
+  journal: {
+    businessYm: string;
+    storeName: string;
+    grossTotal: string;
+    discountTotal: string;
+    discountTax: string;
+    receivableTotal: string;
+    receivables: { label: string; amount: string }[];
+  };
+  /** 料率マスタ（店舗の契約情報） */
+  rates: { id: string; rate: string }[];
+  containerPrice: string;
+  csvRows: number;
+  includedRows: number;
+  containerQty: number;
+  csvAmountTotal: number;
+  feeTotal: string;
+  containerCost: string;
+  realSales: string;
+}
+
 export interface RealExpected {
   /** 発注累計照会に入っている店舗コード */
   storeCode: string;
   august: MonthlyExpected;
   july: MonthlyExpected;
   june: Omit<MonthlyExpected, 'totalClosingAmount' | 'costAfterLoss'>;
+  /** 無ければリアル売上の実データ検証はスキップする */
+  realSales?: { august: RealSalesExpected };
 }
 
 const PATH = process.env['REAL_EXPECTED'] ?? join('tests', 'fixtures', 'real', 'expected.json');

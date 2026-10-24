@@ -21,5 +21,37 @@
     "costRateAfterLossPercent": 0,
     "saladVegetableUsage": 0
   },
-  "storeCode": "0000"
+  "storeCode": "0000",
+  "realSales": {
+    "august": {
+      "journal": {
+        "businessYm": "0000-00",
+        "storeName": "（店舗名）",
+        "grossTotal": "0",
+        "discountTotal": "0",
+        "discountTax": "0",
+        "receivableTotal": "0",
+        "receivables": [
+          {
+            "label": "（売掛欄の表記）",
+            "amount": "0"
+          }
+        ]
+      },
+      "rates": [
+        {
+          "id": "menu",
+          "rate": "0"
+        }
+      ],
+      "containerPrice": "0",
+      "csvRows": 0,
+      "includedRows": 0,
+      "containerQty": 0,
+      "csvAmountTotal": 0,
+      "feeTotal": "0",
+      "containerCost": "0",
+      "realSales": "0"
+    }
+  }
 }
