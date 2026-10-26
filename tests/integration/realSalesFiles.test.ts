@@ -19,7 +19,13 @@ const DIR = process.env['REAL_SALES'] ?? join('C:', 'Users', 'kimi4', 'Downloads
 const CSV = join(DIR, '2026.08商品別売上_20260928135959539.csv');
 const EXP = REAL_EXPECTED?.realSales?.august;
 
-describe.skipIf(!existsSync(CSV) || !EXP)('リアル売上 実データ（2026年8月）', () => {
+/**
+ * 実データの読込は `it` から呼ぶ。`describe.skipIf` でもコールバック本体は
+ * 収集時に実行されるため、ここで読むと実データの無い環境で落ちる。
+ */
+let prepared: ReturnType<typeof prepare> | null = null;
+
+function prepare() {
   const e = EXP!;
   const masters: RealSalesMasters = {
     ...DEFAULT_MASTERS,
@@ -28,25 +34,37 @@ describe.skipIf(!existsSync(CSV) || !EXP)('リアル売上 実データ（2026�
   };
   const file = readProductSalesCsv(new Uint8Array(readFileSync(CSV)), '商品別売上.csv');
   const x = extractContainerQty(file, masters.extractRules[0]!);
+  return { e, masters, file, x };
+}
 
+function data(): ReturnType<typeof prepare> {
+  prepared ??= prepare();
+  return prepared;
+}
+
+describe.skipIf(!existsSync(CSV) || !EXP)('リアル売上 実データ（2026年8月）', () => {
   it('CP932 の実CSVを読める', () => {
+    const { e, file } = data();
     expect(file.issues).toEqual([]);
     expect(file.rows).toHaveLength(e.csvRows);
   });
 
   it('RS-01 容器対象の行数と出数が出数検証値と一致する', () => {
+    const { e, x } = data();
     expect(x.included).toHaveLength(e.includedRows);
     expect(x.qty).toBe(e.containerQty);
     expect(x.issues).toEqual([]);
   });
 
   it('CSV の売上金額合計は 総計1 − 値割引合計 + 値割引消費税 と1円単位で一致する', () => {
+    const { e, file } = data();
     const j = e.journal;
     expect(file.amountTotal).toBe(e.csvAmountTotal);
     expect(Number(j.grossTotal) - Number(j.discountTotal) + Number(j.discountTax)).toBe(e.csvAmountTotal);
   });
 
   it('RS-02・RS-03 容器代・手数料・リアル売上を厳密に再現し、検算①②とも成立する', () => {
+    const { e, masters, file, x } = data();
     const r = computeRealSales({
       targetYm: '2026-08',
       journal: e.journal,

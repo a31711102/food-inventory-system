@@ -276,6 +276,8 @@ export async function downloadWorkbook(h: Harness): Promise<CapturedDownload & {
   const before = h.downloads.length;
   await clickAndSettle(h, buttonByText('完成Excelをダウンロード'));
   await waitFor(() => expect(h.downloads.length).toBe(before + 1), { timeout: 20000 });
+  // 出力中はボタンの文字が「出力中…」に変わる。続けて押せるよう戻るまで待つ
+  await waitFor(() => expect(findButton('完成Excelをダウンロード')).not.toBeNull(), { timeout: 20000 });
 
   const entry = h.downloads[h.downloads.length - 1]!;
   return { ...entry, data: await entry.bytes };
