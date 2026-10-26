@@ -1,11 +1,8 @@
 /**
- * 売上の算出方式と、確定したリアル売上（画面・パイプライン・データベースで共有する型）。
+ * 確定した当月売上高（画面・パイプライン・データベースで共有する型）。
  * 金額・料率は十進表記の文字列で持ち、倍精度を経由しない。
  */
 import type { RealSalesMasters } from './masters';
-
-/** manual: これまでどおり分析用 C4（＝総計1）/ real: 食材費計算用リアル売上 */
-export type SalesMethod = 'manual' | 'real';
 
 /** 監査用の明細（要件§11.7）。データベースへの保存に使う */
 export interface RealSalesDetail {

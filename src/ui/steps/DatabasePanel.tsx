@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Panel, Note } from '../components';
 import { InventoryDatabase } from '../../storage/db';
-import type { ConfirmedRealSales, SalesMethod } from '../../domain/realSales/sales';
+import type { ConfirmedRealSales } from '../../domain/realSales/sales';
 import type { RealSalesMasters } from '../../domain/realSales/masters';
 import {
   detectStorageMode,
@@ -39,8 +39,8 @@ export function DatabasePanel({
   realSales?: ConfirmedRealSales | null;
   /** 料率・容器単価マスタ。保存時に写しを残し、別のPCで開いたときに復元できるようにする */
   masters?: RealSalesMasters;
-  /** .db を開いたとき、保存されているマスタと月ごとの売上算出方式を画面へ渡す */
-  onOpened?: (info: { masters: RealSalesMasters | null; methods: Record<string, SalesMethod> }) => void;
+  /** .db を開いたとき、保存されている料率・容器単価マスタを画面へ渡す */
+  onOpened?: (info: { masters: RealSalesMasters | null }) => void;
 }): JSX.Element {
   const [mode] = useState<StorageMode>(() => detectStorageMode());
   const [handle, setHandle] = useState<Handle>(null);
@@ -51,13 +51,7 @@ export function DatabasePanel({
 
   const notifyOpened = (opened: InventoryDatabase): void => {
     if (!onOpened) return;
-    const months = [...new Set(opened.listRuns().map((r) => String(r.target_ym)))];
-    const methods: Record<string, SalesMethod> = {};
-    for (const ym of months) {
-      const m = opened.salesMethodOf(ym);
-      if (m) methods[ym] = m;
-    }
-    onOpened({ masters: opened.latestMasters(), methods });
+    onOpened({ masters: opened.latestMasters() });
   };
 
   useEffect(() => {
@@ -123,12 +117,11 @@ export function DatabasePanel({
       db.saveReport(runId, result.report);
       db.saveIssues(runId, result.issues);
       db.saveImportFiles(runId, result.importedFiles);
-      // 売上の算出方式は手入力の月も残す。リアル売上の月は確定値・チャネル明細・読取値・ファイルの指紋も残す
+      // 採用した売上と、確定値・チャネル明細・読取値・ファイルの指紋を残す
       db.saveSales(runId, targetYm, {
-        method: result.sales.method,
         adoptedSales: result.sales.adopted,
         originalC4: result.sales.masterC4,
-        confirmed: result.sales.method === 'real' ? realSales ?? null : null,
+        confirmed: realSales ?? null,
         actorRole: role,
       });
       if (masters && masters.channels.length > 0) db.saveMastersSnapshot(masters);

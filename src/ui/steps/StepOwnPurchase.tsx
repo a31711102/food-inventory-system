@@ -260,7 +260,7 @@ export function StepOwnPurchase({
 
         <div className="actions">
           <button type="button" className="primary" onClick={() => void onNext()} disabled={running}>
-            {running ? '再計算中…' : '次へ：売上確定'}
+            {running ? '再計算中…' : '次へ：売上計算'}
           </button>
         </div>
       </Panel>

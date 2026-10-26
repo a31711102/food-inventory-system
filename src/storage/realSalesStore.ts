@@ -1,18 +1,16 @@
 /**
- * リアル売上算出のマスタと、月ごとの売上算出方式の保存（ブラウザの localStorage）。
+ * リアル売上算出のマスタと、確定した売上の履歴の保存（ブラウザの localStorage）。
  *
  * 取込履歴と同じく、データベースを接続していなくても使えるようにする。
  * データベースへは「この処理結果を保存」のときに写しを残す（バックアップの対象になる）。
  * 保存先はこの店舗PCのブラウザだけで、外部へは送らない。
  */
 import { DEFAULT_MASTERS, type RealSalesMasters } from '../domain/realSales/masters';
-import type { SalesMethod } from '../app/pipeline';
 
 const MASTERS_KEY = 'fis.realSales.masters.v1';
 const HISTORY_KEY = 'fis.realSales.history.v1';
 
 export interface SalesHistoryEntry {
-  method: SalesMethod;
   realSales?: string;
   feeTotal?: string;
   containerQty?: number;

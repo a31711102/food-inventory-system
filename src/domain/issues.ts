@@ -78,7 +78,6 @@ export const ISSUE_CATALOG = {
 
   // --- リアル売上算出（要件§11） ---
   E016: { level: 'BLOCKING', title: 'ジャーナルの営業月が対象年月と違う' },
-  E017: { level: 'BLOCKING', title: 'リアル売上が未確定' },
   E018: { level: 'BLOCKING', title: '商品別売上CSVを読めない' },
   E019: { level: 'BLOCKING', title: '料率・容器単価が未設定' },
   E020: { level: 'BLOCKING', title: 'ジャーナルの必須値が無い' },
@@ -87,8 +86,7 @@ export const ISSUE_CATALOG = {
   W027: { level: 'WARNING', title: '代行チャネルが写真に無い' },
   W028: { level: 'WARNING', title: 'ジャーナルの検算不一致' },
   W029: { level: 'WARNING', title: '商品別売上CSVに未知の分類' },
-  W030: { level: 'WARNING', title: '前月と売上の算出方式が違う' },
-  W031: { level: 'WARNING', title: 'リアル売上の前月比変動' },
+  W031: { level: 'WARNING', title: '当月売上高の前月比変動' },
   I006: { level: 'INFO', title: '採用売上が当月マスタの値と違う' },
   I007: { level: 'INFO', title: '出数を手入力で採用' },
 } as const satisfies Record<string, { level: IssueLevel; title: string }>;

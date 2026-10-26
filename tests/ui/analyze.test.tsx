@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 画面テスト M-12〜M-15（STEP 5：分析・出力）。
+ * 画面テスト M-12〜M-15（STEP 6：分析・出力）。
  * 手順: docs/06_画面テスト手順書.md §8
  */
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
@@ -17,8 +17,7 @@ import {
   setupApp,
   importNormalSet,
   advanceToAnalyze,
-  buttonByText,
-  clickAndSettle,
+  goToStep,
   downloadWorkbook,
   findButton,
   issuesOf,
@@ -87,13 +86,14 @@ describe('M-13 算出できない項目は理由つきで出る（J-8）', () =>
     const w005 = issuesOf('W005');
     expect(w005).toHaveLength(1);
     expect(w005[0]!.message).toContain('原価率を算出できません');
-    expect(w005[0]!.message).toContain('分析用シートの当月売上高を確認するか、分析・出力画面で入力してください');
+    expect(w005[0]!.message).toContain('STEP 5（売上計算）で当月売上高を確定してください');
   }, 60000);
 
-  it('原価率が「0%」ではなく算出不可として表示される', async () => {
+  it('売上を確定していなければ、原価率は「0%」ではなく算出不可と表示され、出力もできない', async () => {
     const h = setupApp();
     await importNormalSet(h, set, { master: abnormal('ng_W005_E011_売上高なし.xlsx') });
-    await advanceToAnalyze(h);
+    // 売上計算を確定せずに STEP 6 を開く（タブからは確定前でも開ける）
+    await goToStep(h, 6);
 
     const kpiTexts = [...document.querySelectorAll('.kpi')].map((e) => e.textContent ?? '');
     const costRate = kpiTexts.find((t) => t.includes('ロス引き後原価率'));
@@ -101,26 +101,19 @@ describe('M-13 算出できない項目は理由つきで出る（J-8）', () =>
     expect(costRate).not.toContain('0.00%');
     expect(costRate).not.toMatch(/\d+\.\d+%/);
     expect(costRate).toContain('算出不可');
+    expect(document.body.textContent).toContain('当月売上高が確定していないため出力できません');
+    expect(findButton('完成Excelをダウンロード')?.disabled).toBe(true);
   }, 60000);
 
-  it('画面で売上高を入力して再計算すると原価率が出る', async () => {
+  it('STEP 5 で売上を確定すると、C4 が空のマスタでも原価率が出る', async () => {
     const h = setupApp();
     await importNormalSet(h, set, { master: abnormal('ng_W005_E011_売上高なし.xlsx') });
     await advanceToAnalyze(h);
 
-    const salesInput = document.querySelector<HTMLInputElement>('input[type=number]')!;
-    fireEvent.change(salesInput, { target: { value: String(TOTAL_SALES) } });
-    await clickAndSettle(h, buttonByText('再計算'));
-
-    await waitFor(
-      () => {
-        const kpi = [...document.querySelectorAll('.kpi')]
-          .map((e) => e.textContent ?? '')
-          .find((t) => t.includes('ロス引き後原価率'));
-        expect(kpi).toMatch(/\d+\.\d+%/);
-      },
-      { timeout: 20000 },
-    );
+    const kpi = [...document.querySelectorAll('.kpi')]
+      .map((e) => e.textContent ?? '')
+      .find((t) => t.includes('ロス引き後原価率'));
+    expect(kpi).toMatch(/\d+\.\d+%/);
     expect(issuesOf('W005')).toEqual([]);
     expect(document.body.textContent).toContain(TOTAL_SALES.toLocaleString());
   }, 60000);

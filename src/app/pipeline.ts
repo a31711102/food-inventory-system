@@ -37,8 +37,8 @@ import type {
   OwnPurchaseInput,
   OwnPurchaseCandidate,
 } from '../domain/models';
-import type { ConfirmedRealSales, SalesMethod } from '../domain/realSales/sales';
-export type { ConfirmedRealSales, SalesMethod } from '../domain/realSales/sales';
+import type { ConfirmedRealSales } from '../domain/realSales/sales';
+export type { ConfirmedRealSales } from '../domain/realSales/sales';
 
 export interface UploadedFile {
   fileName: string;
@@ -67,28 +67,23 @@ export interface FactorConfirmation {
 
 
 export interface SalesSelection {
-  method: SalesMethod;
-  /** method が real のときの確定値。未確定なら null（出力できない） */
+  /** 売上計算の確定値。未確定なら null（出力できない） */
   confirmed: ConfirmedRealSales | null;
 }
 
 /** 当月の売上の扱い（画面表示と記録用） */
 export interface SalesSummary {
-  method: SalesMethod;
   /** 原価率の分母に使った売上 */
   adopted: number | null;
   /** 当月本部マスタの分析用 C4 の値 */
   masterC4: number | null;
-  /** 総計1（リアル売上方式のときのみ） */
+  /** 総計1（売上計算を確定した月のみ） */
   grossTotal: number | null;
   /**
    * 総計1 を分母にしたロス引き後原価率。
    * 「原価率40%が理想」の目安は総計1基準の値なので（店舗回答）、目安との比較はこちらで行う
    */
   grossBasedCostRatePercent: number | null;
-  previousMethod: SalesMethod;
-  /** 前月と算出方式が違う（比較に注記が要る） */
-  methodDiffers: boolean;
 }
 
 export interface PipelineInput {
@@ -100,13 +95,11 @@ export interface PipelineInput {
   ownPurchases?: readonly OwnPurchaseInput[];
   /** 画面で入力した当月売上高。null ならファイルの値を使う */
   totalSalesOverride?: number | null;
-  /** 売上の算出方式。未指定は手入力方式 */
-  sales?: SalesSelection;
   /**
-   * 前月の売上の算出方式。不明なら manual（これまでの C4 は総計1。店舗回答）。
-   * 方式が違えば比較に注記を付ける（要件§11.9）
+   * 売上計算（要件§11）の確定値。画面からは常に渡る。
+   * 未指定のときは当月マスタの分析用 C4 をそのまま使う（画面を通さない計算用）
    */
-  previousSalesMethod?: SalesMethod;
+  sales?: SalesSelection;
   lossAmountOverride?: number | null;
   approveNewOpening?: boolean;
   /**
@@ -402,47 +395,30 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   );
 
   // --- 9. レポート集計 ---
-  const method: SalesMethod = input.sales?.method ?? 'manual';
-  const confirmed = method === 'real' ? input.sales?.confirmed ?? null : null;
+  const confirmed = input.sales?.confirmed ?? null;
   const fmtYen = (n: number): string => n.toLocaleString('ja-JP', { maximumFractionDigits: 6 });
   let totalSales = input.totalSalesOverride ?? master.analysis.totalSales;
-  if (method === 'real') {
-    if (!confirmed) {
-      issues.add('E017', 'リアル売上方式を選んでいますが、まだ確定していません。売上確定の画面で確定するか、手入力方式に切り替えてください。');
-    } else {
-      // 確定値は十進表記。Number() で「その十進数に最も近い倍精度値」になり、C4 にもその値が入る
-      totalSales = Number(confirmed.realSales);
-      const c4 = master.analysis.totalSales;
-      if (c4 !== null && c4 !== totalSales) {
-        issues.add(
-          'I006',
-          `当月本部マスタの当月売上高（分析用 C4）は ${fmtYen(c4)} 円ですが、確定したリアル売上 ${fmtYen(totalSales)} 円を採用します（差額 ${fmtYen(totalSales - c4)} 円）。出力するExcelの C4 はリアル売上になります。`,
-          { fileName: input.master.fileName, sheetName: profiles.HQ_MASTER.analysisSheet?.name, cell: 'C4' },
-        );
-      }
+  if (confirmed) {
+    // 確定値は十進表記。Number() で「その十進数に最も近い倍精度値」になり、C4 にもその値が入る
+    totalSales = Number(confirmed.realSales);
+    const c4 = master.analysis.totalSales;
+    if (c4 !== null && c4 !== totalSales) {
+      issues.add(
+        'I006',
+        `当月本部マスタの当月売上高（分析用 C4）は ${fmtYen(c4)} 円ですが、売上計算で確定した ${fmtYen(totalSales)} 円を採用します（差額 ${fmtYen(totalSales - c4)} 円）。出力するExcelの C4 もこの値になります。`,
+        { fileName: input.master.fileName, sheetName: profiles.HQ_MASTER.analysisSheet?.name, cell: 'C4' },
+      );
     }
   }
   const lossAmount = input.lossAmountOverride ?? master.analysis.lossAmount ?? 0;
   const report = buildReport(rows, { targetYm: input.targetYm, totalSales, lossAmount });
 
-  const previousMethod: SalesMethod = input.previousSalesMethod ?? 'manual';
-  const methodDiffers = previousReport !== null && previousMethod !== method;
-  const label = (m: SalesMethod): string => (m === 'real' ? 'リアル売上' : '手入力（総計1）');
-  if (methodDiffers) {
-    issues.add(
-      'W030',
-      `前月は${label(previousMethod)}、当月は${label(method)}で売上を算出しています。売上の定義が違うため、原価率の前月比には算出方式の違いによる変動が含まれます（リアル売上は総計1より代行手数料と容器代のぶん小さく、原価率は高く出ます）。`,
-    );
-  }
   const grossTotal = confirmed ? Number(confirmed.grossTotal) : null;
   const sales: SalesSummary = {
-    method,
     adopted: totalSales,
     masterC4: master.analysis.totalSales,
     grossTotal,
     grossBasedCostRatePercent: grossTotal && grossTotal > 0 && report.costAfterLoss !== null ? (report.costAfterLoss / grossTotal) * 100 : null,
-    previousMethod,
-    methodDiffers,
   };
 
   if (report.overallCostRatePercent === null) {
@@ -450,7 +426,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       report.unavailableReasons['COST_RATE'] ?? '当月売上高が使えないため原価率を算出できません';
     issues.add(
       'W005',
-      `${reason}。分析用シートの当月売上高を確認するか、分析・出力画面で入力してください。`,
+      `${reason}。STEP 5（売上計算）で当月売上高を確定してください。`,
       { fileName: input.master.fileName, sheetName: profiles.HQ_MASTER.analysisSheet?.name },
     );
   }

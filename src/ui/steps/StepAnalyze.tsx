@@ -15,9 +15,7 @@ export function StepAnalyze({
   role,
   targetYm,
   previousYm,
-  totalSalesOverride,
   lossAmountOverride,
-  onSetTotalSales,
   onSetLossAmount,
   onRecalc,
   running,
@@ -27,9 +25,7 @@ export function StepAnalyze({
   role: Role;
   targetYm: string;
   previousYm: string | null;
-  totalSalesOverride: number | null;
   lossAmountOverride: number | null;
-  onSetTotalSales: (v: number | null) => void;
   onSetLossAmount: (v: number | null) => void;
   onRecalc: () => void | Promise<void>;
   running: boolean;
@@ -43,9 +39,9 @@ export function StepAnalyze({
 
   const { report, anomalies } = result;
   const blocking = result.issues.filter((i) => i.level === 'BLOCKING');
-  // 「原価率40%が理想」は総計1を前提にした目安（店舗回答）。リアル売上の月は総計1基準の率で比べる
-  const realMode = result.sales.method === 'real';
-  const levelRate = realMode ? result.sales.grossBasedCostRatePercent : report.costRateAfterLossPercent;
+  // 「原価率40%が理想」は総計1を前提にした目安（店舗回答）。確定済みの月は総計1基準の率で比べる
+  const hasSales = result.sales.grossTotal !== null;
+  const levelRate = hasSales ? result.sales.grossBasedCostRatePercent : report.costRateAfterLossPercent;
   const level = describeLevel(levelRate);
   const overallAnomaly = anomalies.some((a) => a.scope === 'OVERALL');
 
@@ -95,32 +91,18 @@ export function StepAnalyze({
       <Panel title="STEP 6　分析・出力" hint="計算結果と前月比較を確認し、完成Excelをダウンロードします。">
         <IssueBadges issues={result.issues} />
 
-        {realMode ? (
+        {hasSales ? (
           <Note>
-            当月売上高は<strong>リアル売上</strong>（{report.totalSales === null ? '未確定' : `${report.totalSales.toLocaleString('ja-JP', { maximumFractionDigits: 6 })} 円`}）を使っています。
-            変えるときは STEP 5（売上確定）に戻ってください。出力するExcelの C4 もこの値になります。
+            当月売上高は <strong>{report.totalSales === null ? '未確定' : `${report.totalSales.toLocaleString('ja-JP', { maximumFractionDigits: 6 })} 円`}</strong>（STEP 5 の売上計算で確定した値）を使っています。
+            変えるときは STEP 5 に戻ってください。出力するExcelの C4 もこの値になります。
           </Note>
-        ) : null}
-        {result.sales.methodDiffers ? (
+        ) : (
           <Note variant="warn">
-            <strong>前月と売上の算出方式が違います</strong>（前月: {result.sales.previousMethod === 'real' ? 'リアル売上' : '手入力（総計1）'}／当月: {realMode ? 'リアル売上' : '手入力（総計1）'}）。
-            原価率の前月比・異常判定には、方式の違いによる変動が含まれます。
+            当月売上高がまだ確定していません。STEP 5（売上計算）で確定してください。
           </Note>
-        ) : null}
+        )}
 
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-          {realMode ? null : (
-            <label className="field">
-              <span>当月売上高（未入力ならファイルの値を使用）</span>
-              <input
-                type="number"
-                step="any"
-                value={totalSalesOverride ?? ''}
-                placeholder={result.analysis.totalSales === null ? '未設定' : String(result.analysis.totalSales)}
-                onChange={(e) => onSetTotalSales(e.target.value === '' ? null : Number(e.target.value))}
-              />
-            </label>
-          )}
           <label className="field">
             <span>ロス額（通常は空欄）</span>
             <input
@@ -140,9 +122,9 @@ export function StepAnalyze({
 
         <div className="kpi-row">
           <Kpi
-            label={realMode ? '当月売上高（リアル売上）' : '当月売上高'}
+            label="当月売上高"
             value={report.totalSales === null ? '未設定' : `${formatAmount(report.totalSales)} 円`}
-            note={realMode && result.sales.grossTotal !== null ? `総計1 ${formatAmount(result.sales.grossTotal)} 円` : undefined}
+            note={result.sales.grossTotal !== null ? `総計1 ${formatAmount(result.sales.grossTotal)} 円` : undefined}
           />
           <Kpi
             label="使用高合計"
@@ -210,14 +192,14 @@ export function StepAnalyze({
         title="水準の目安（参考）"
         hint="運用上の目安であり、前月比による異常判定とは無関係です。ここでの乖離は異常ではありません。"
       >
-        {realMode ? (
+        {hasSales ? (
           <p className="muted">
             目安の {LEVEL_TARGET_PERCENT}% は総計1を売上としたときの値なので、総計1基準の原価率で比べます
-            （リアル売上基準では {formatPercent(report.costRateAfterLossPercent)}）。
+            （当月売上高を分母にすると {formatPercent(report.costRateAfterLossPercent)}）。
           </p>
         ) : null}
         <p>
-          ロス引き後原価率{realMode ? '（総計1基準）' : ''} <strong>{formatPercent(levelRate)}</strong>／目安 {LEVEL_TARGET_PERCENT}%
+          ロス引き後原価率{hasSales ? '（総計1基準）' : ''} <strong>{formatPercent(levelRate)}</strong>／目安 {LEVEL_TARGET_PERCENT}%
           　判定: <strong>{level.label}</strong>
           {level.deltaFromTargetPt !== null ? `（目安との差 ${formatDiff(level.deltaFromTargetPt, 'pt')}）` : ''}
         </p>
@@ -325,6 +307,10 @@ export function StepAnalyze({
           <Note variant="warn">
             エラーが {blocking.length} 件あるため出力できません。上の「未解決のエラー」を解消してください。
           </Note>
+        ) : !hasSales ? (
+          <Note variant="warn">
+            当月売上高が確定していないため出力できません。STEP 5（売上計算）で確定してください。
+          </Note>
         ) : stale ? (
           <Note variant="warn">入力が変更されています。再計算してから出力してください。</Note>
         ) : (
@@ -352,7 +338,7 @@ export function StepAnalyze({
             type="button"
             className="primary"
             onClick={() => void doExport()}
-            disabled={blocking.length > 0 || stale || exporting}
+            disabled={blocking.length > 0 || !hasSales || stale || exporting}
           >
             {exporting ? '出力中…' : '完成Excelをダウンロード'}
           </button>

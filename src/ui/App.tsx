@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
-import { runPipeline, previousYm, type ConfirmedRealSales, type PipelineResult, type SalesMethod, type UploadedFile } from '../app/pipeline';
+import { runPipeline, previousYm, type ConfirmedRealSales, type PipelineResult, type UploadedFile } from '../app/pipeline';
 import type { OwnPurchaseInput } from '../domain/models';
 import { defaultTargetYm } from './format';
 import { StepUpload } from './steps/StepUpload';
@@ -30,7 +30,7 @@ const STEPS = [
   { id: 2, label: '列設定と取込結果', short: '列の対応確認' },
   { id: 3, label: '商品差分確認', short: '新規・削除' },
   { id: 4, label: '自店購入入力', short: '発注外の仕入' },
-  { id: 5, label: '売上確定', short: '手入力／リアル売上' },
+  { id: 5, label: '売上計算', short: '当月売上高の確定' },
   { id: 6, label: '分析・出力', short: '比較とダウンロード' },
 ] as const;
 
@@ -47,15 +47,9 @@ export default function App(): JSX.Element {
   const [ownPurchases, setOwnPurchases] = useState<OwnPurchaseInput[]>([]);
   const [approvedCodes, setApprovedCodes] = useState<Set<string>>(new Set());
   const [confirmedFactors, setConfirmedFactors] = useState<Map<string, number>>(new Map());
-  const [totalSalesOverride, setTotalSalesOverride] = useState<number | null>(null);
   const [lossAmountOverride, setLossAmountOverride] = useState<number | null>(null);
-  /** 売上の算出方式（要件§11）。前回使った方式を初期値にする */
+  /** 確定した売上の履歴（前月比の変動判定 W031 に使う。要件§11） */
   const [salesHistory, setSalesHistory] = useState<Record<string, SalesHistoryEntry>>(() => loadSalesHistory());
-  const [salesMethod, setSalesMethod] = useState<SalesMethod>(() => {
-    const h = loadSalesHistory();
-    const latest = Object.keys(h).sort().pop();
-    return latest ? h[latest]!.method : 'manual';
-  });
   const [realSalesConfirmed, setRealSalesConfirmed] = useState<ConfirmedRealSales | null>(null);
   const [masters, setMastersState] = useState<RealSalesMasters>(() => loadMasters());
   const setMasters = useCallback((m: RealSalesMasters) => {
@@ -94,13 +88,10 @@ export default function App(): JSX.Element {
         confirmedFactors: overrides?.confirmedFactors ?? confirmedFactors,
         approvedOpeningCodes: approvedCodes,
         importHistory,
-        totalSalesOverride,
         lossAmountOverride,
         sales: {
-          method: salesMethod,
           confirmed: overrides?.realSales !== undefined ? overrides.realSales : realSalesConfirmed,
         },
-        previousSalesMethod: salesHistory[previousYm(targetYm)]?.method ?? 'manual',
         approveNewOpening: false,
       });
       setResult(next);
@@ -115,7 +106,7 @@ export default function App(): JSX.Element {
     }
     // importHistory は判定に使うだけで、更新をトリガに再計算しない
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, targetYm, ownPurchases, confirmedFactors, totalSalesOverride, lossAmountOverride, approvedCodes, salesMethod, realSalesConfirmed, salesHistory]);
+  }, [files, targetYm, ownPurchases, confirmedFactors, lossAmountOverride, approvedCodes, realSalesConfirmed]);
 
   // 入力が変わったら結果を無効化する
   useEffect(() => {
@@ -123,15 +114,15 @@ export default function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files.master, files.previous, files.orders, files.unitMaster, targetYm]);
 
-  // 対象年月・マスタ・方式が変わったら、確定したリアル売上は取り消す（再確定を求める。要件§11.6-8）
+  // 対象年月・マスタが変わったら、確定した売上は取り消す（再確定を求める。要件§11.6-8）
   useEffect(() => {
     setRealSalesConfirmed(null);
-  }, [targetYm, masters, salesMethod]);
+  }, [targetYm, masters]);
 
   /** 前月のリアル売上（大幅変動の警告 W031 に使う） */
   const previousReal = (() => {
     const p = salesHistory[previousYm(targetYm)];
-    return p?.method === 'real' && p.realSales && p.feeTotal && p.containerQty !== undefined
+    return p?.realSales && p.feeTotal && p.containerQty !== undefined
       ? { targetYm: previousYm(targetYm), realSales: p.realSales, feeTotal: p.feeTotal, containerQty: p.containerQty }
       : null;
   })();
@@ -247,21 +238,18 @@ export default function App(): JSX.Element {
         <StepSales
           targetYm={targetYm}
           role={role}
-          method={salesMethod}
-          onSetMethod={setSalesMethod}
           masters={masters}
           onSetMasters={setMasters}
           confirmed={realSalesConfirmed}
           onConfirm={async (c) => {
             setRealSalesConfirmed(c);
-            setSalesHistory(recordSales(targetYm, { method: 'real', realSales: c.realSales, feeTotal: c.feeTotal, containerQty: c.containerQty, confirmedAt: c.confirmedAt }));
+            setSalesHistory(recordSales(targetYm, { realSales: c.realSales, feeTotal: c.feeTotal, containerQty: c.containerQty, confirmedAt: c.confirmedAt }));
             await recalc({ realSales: c });
           }}
           onUnconfirm={() => setRealSalesConfirmed(null)}
           previous={previousReal}
           masterC4={result.analysis.totalSales}
           onNext={async () => {
-            if (salesMethod === 'manual') setSalesHistory(recordSales(targetYm, { method: 'manual' }));
             await recalc();
             setStep(6);
           }}
@@ -275,11 +263,9 @@ export default function App(): JSX.Element {
           role={role}
           targetYm={targetYm}
           previousYm={result.previousReport ? previousYm(targetYm) : null}
-          totalSalesOverride={totalSalesOverride}
           lossAmountOverride={lossAmountOverride}
-          onSetTotalSales={setTotalSalesOverride}
           onSetLossAmount={setLossAmountOverride}
-          onRecalc={recalc}
+          onRecalc={() => void recalc()}
           running={running}
           stale={stale}
         />
@@ -291,12 +277,9 @@ export default function App(): JSX.Element {
         role={role}
         realSales={realSalesConfirmed}
         masters={masters}
-        onOpened={({ masters: saved, methods }) => {
-          // 別のPCで .db を開いたときにも、料率と過去月の算出方式を引き継ぐ
+        onOpened={({ masters: saved }) => {
+          // 別のPCで .db を開いたときにも、料率・容器単価を引き継ぐ
           if (saved && saved.channels.length > 0 && masters.channels.length === 0) setMasters(saved);
-          const merged = { ...salesHistory };
-          for (const [ym, m] of Object.entries(methods)) merged[ym] = { ...(merged[ym] ?? {}), method: m };
-          setSalesHistory(merged);
         }}
       />
 

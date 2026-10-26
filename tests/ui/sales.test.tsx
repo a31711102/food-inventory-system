@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * 画面テスト STEP 5 売上確定（要件§11.6・RS-04・RS-06・RS-07）。
+ * 画面テスト STEP 5 売上計算（要件§11.6・RS-04・RS-06・RS-07）。
  *
  * happy-dom では OCR（WASM・Canvas）は動かないので、写真なしで手入力する経路で確かめる。
  * これは OCR が読めなかったときの代替経路でもある。OCR そのものは
@@ -19,7 +19,6 @@ import {
   goToStep,
   buttonByText,
   findButton,
-  issuesOf,
   downloadWorkbook,
   waitFor,
   type Harness,
@@ -51,13 +50,13 @@ async function openStep5(h: Harness, approve = false): Promise<void> {
   if (approve) await h.user.click(buttonByText('すべて承認する'));
   await h.user.click(buttonByText('自店購入入力へ'));
   await waitFor(() => expect(text()).toContain('STEP 4　自店購入入力'));
-  await h.user.click(buttonByText('次へ：売上確定'));
-  await waitFor(() => expect(text()).toContain('STEP 5　売上確定'));
+  await h.user.click(buttonByText('次へ：売上計算'));
+  await waitFor(() => expect(text()).toContain('STEP 5　売上計算'));
 }
 
-async function chooseReal(h: Harness): Promise<void> {
-  await h.user.click(document.querySelectorAll<HTMLInputElement>('input[name=sales-method]')[1]!);
-  await waitFor(() => expect(text()).toContain('料率・容器単価マスタ'));
+/** マスタ未登録の状態から始める（E019 の確認と、取込そのものの確認に使う） */
+function setupWithoutMasters(): Harness {
+  return setupApp({ masters: false });
 }
 
 async function importMasters(h: Harness): Promise<void> {
@@ -95,52 +94,45 @@ async function enterJournal(h: Harness): Promise<void> {
 
 /** 計算内訳が出るまで待つ（総計1・内訳・出数がそろったとき） */
 async function waitBreakdown(): Promise<void> {
-  await waitFor(() => expect(text()).toContain('食材費計算用リアル売上'));
+  await waitFor(() => expect(text()).toContain('当月売上高（食材費計算用）'));
 }
 
-describe('STEP 5 売上確定：手入力方式（従来）', () => {
-  it('既定は手入力方式で、当月マスタの C4 の扱いを示し、そのまま分析へ進める', async () => {
+describe('STEP 5 売上計算', () => {
+  it('算出方式の選択は無く、計算の式だけを示す', async () => {
     const h = setupApp();
     await openStep5(h);
-    expect(document.querySelectorAll<HTMLInputElement>('input[name=sales-method]')[0]!.checked).toBe(true);
-    expect(text()).toContain('当月本部マスタの当月売上高（分析用 C4）は');
-    await h.user.click(buttonByText('計算して分析へ'));
-    await waitFor(() => expect(text()).toContain('STEP 6　分析・出力'));
-    expect(issuesOf('E017')).toEqual([]);
+    expect(document.querySelectorAll('input[name=sales-method]')).toHaveLength(0);
+    expect(text()).toContain('当月売上高 ＝ 総計1 − 代行手数料 − 弁当容器代');
+    expect(text()).not.toContain('リアル売上方式');
+    expect(text()).not.toContain('手入力方式');
   }, 60000);
-});
 
-describe('STEP 5 売上確定：リアル売上方式', () => {
   it('料率が未登録なら案内が出て、計算内訳は出ない（料率はコードに持たない）', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     expect(text()).toContain('有効な代行チャネルの料率がありません');
     expect(text()).toContain('既存のマスタExcelから取り込む');
   }, 60000);
 
   it('既存のマスタExcelを取り込むと、対象年月の料率が表示される', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     expect(text()).toContain('27.5%（0.275）');
     expect(text()).toContain('40 円');
   }, 60000);
 
   it('店舗担当者のロールではマスタを編集できない', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
     fireEvent.change(document.querySelector('select')!, { target: { value: 'STAFF' } });
-    await chooseReal(h);
-    expect(text()).toContain('管理者に登録を依頼してください');
+    await waitFor(() => expect(text()).toContain('管理者に登録を依頼してください'));
     expect(findButton('料率を変更')).toBeNull();
   }, 60000);
 
   it('写真の値・CSV から計算内訳を出し、検算①②が一致する', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
@@ -155,9 +147,8 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
   }, 60000);
 
   it('RS-04 「写真と見比べて確認しました」を付けるまで確定できない', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
@@ -169,9 +160,8 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
   }, 60000);
 
   it('検算が合わない値（総計1 の先頭桁の誤読）は警告が出る', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
@@ -181,9 +171,8 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
   }, 60000);
 
   it('営業月が対象年月と違えば確定できない（E016）', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
@@ -195,20 +184,17 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
     expect(buttonByText('この内容で確定').disabled).toBe(true);
   }, 60000);
 
-  it('RS-07 未確定のまま分析へ進むと E017 で出力できない', async () => {
+  it('RS-07 未確定のまま分析へ進んでも出力できない', async () => {
     const h = setupApp();
     await openStep5(h, true);
-    await chooseReal(h);
     await goToStep(h, 6);
-    await h.user.click(buttonByText('再計算'));
-    await waitFor(() => expect(issuesOf('E017')).toHaveLength(1));
+    expect(text()).toContain('当月売上高が確定していないため出力できません');
     expect(findButton('完成Excelをダウンロード')?.disabled).toBe(true);
   }, 60000);
 
-  it('RS-06 確定すると分析の売上がリアル売上になり、出力Excelの C4 に丸めずに入る', async () => {
-    const h = setupApp();
+  it('RS-06 確定すると分析の売上が計算値になり、出力Excelの C4 に丸めずに入る', async () => {
+    const h = setupWithoutMasters();
     await openStep5(h, true);
-    await chooseReal(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
@@ -216,13 +202,13 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
     const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     await h.user.click(buttonByText('この内容で確定'));
-    await waitFor(() => expect(text()).toContain('リアル売上を確定しました'));
+    await waitFor(() => expect(text()).toContain('当月売上高を確定しました'));
     // 確定すると再計算が走る。終わるまでボタンは「再計算中…」
     await waitFor(() => expect(findButton('次へ：分析・出力')?.disabled).toBe(false));
 
     await h.user.click(buttonByText('次へ：分析・出力'));
     await waitFor(() => expect(text()).toContain('STEP 6　分析・出力'));
-    expect(text()).toContain('当月売上高（リアル売上）');
+    expect(text()).toContain('STEP 5 の売上計算で確定した値');
     // 目安は総計1基準で比べる（店舗回答）
     expect(text()).toContain('ロス引き後原価率（総計1基準）');
 
@@ -232,9 +218,8 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
   }, 90000);
 
   it('確定後に読み取り値を変えると、確定は取り消される', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
@@ -242,17 +227,16 @@ describe('STEP 5 売上確定：リアル売上方式', () => {
     const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     await h.user.click(buttonByText('この内容で確定'));
-    await waitFor(() => expect(text()).toContain('リアル売上を確定しました'));
+    await waitFor(() => expect(text()).toContain('当月売上高を確定しました'));
 
     typeInto('値割引合計', '1001');
-    await waitFor(() => expect(text()).not.toContain('リアル売上を確定しました'));
+    await waitFor(() => expect(text()).not.toContain('当月売上高を確定しました'));
     expect(findButton('この内容で確定')).not.toBeNull();
   }, 60000);
 
   it('CSV が使えないときは理由つきで出数を手入力できる', async () => {
-    const h = setupApp();
+    const h = setupWithoutMasters();
     await openStep5(h);
-    await chooseReal(h);
     await importMasters(h);
     await enterJournal(h);
     const box = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('容器対象出数を手入力する'))!.querySelector('input')!;

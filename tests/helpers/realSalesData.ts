@@ -68,6 +68,36 @@ export const TEST_EXPECTED = {
   csvAmountTotal: 1233647,
 };
 
+/**
+ * 画面テストで STEP 5（売上計算）を通すための架空の一式。
+ *
+ * 確定値がちょうど TOTAL_SALES（当月マスタの分析用 C4 と同じ 5,000,000）になるようにしてある。
+ * こうしておくと、売上計算を挟んでも分析・出力の期待値が変わらない。
+ *   5,075,000 −（250,000 × 0.2）−（625 × 40）= 5,000,000
+ * 検算①（売掛合計＝内訳）と②（総計1 − 値割引 + 税 ＝ CSV の売上金額合計）はどちらも成立する。
+ */
+export const HARNESS_SALES = {
+  grossTotal: '5075000',
+  receivableLabel: 'menu',
+  receivableAmount: '250000',
+  containerQty: 625,
+  realSales: 5_000_000,
+};
+
+/** 上の一式に対応するマスタ（写真に出るチャネルだけ。W027 を出さない） */
+export function harnessMasters(): RealSalesMasters {
+  return {
+    ...JSON.parse(JSON.stringify(DEFAULT_MASTERS)),
+    channels: [channelRow('menu', '0.2')],
+    containerPrices: [{ price: '40', validFrom: '2000-01', validTo: null }],
+  } as RealSalesMasters;
+}
+
+/** 上の一式に対応する商品別売上CSV（対象出数 625、売上金額合計 5,075,000） */
+export function harnessSalesCsv(): Uint8Array {
+  return buildProductSalesCsv([['カレー', 'テイクアウト_カレー', 'TO_カレー（A）', HARNESS_SALES.containerQty, 5_075_000]]);
+}
+
 const HEADER = '大分類,中分類,小分類,商品コード,商品名,価格,販売数,販売数構成比,一日当たり平均販売数,10万円当たり,売上金額,売上金額構成比';
 
 /** [大分類, 中分類, 小分類, 販売数, 売上金額] */

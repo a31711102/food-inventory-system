@@ -279,7 +279,7 @@ describe('InventoryDatabase', () => {
   });
 });
 
-describe('リアル売上の記録（要件§11.7）', () => {
+describe('売上計算の記録（要件§11.7）', () => {
   // 値はすべて架空
   const confirmed = {
     realSales: '1164465.105',
@@ -305,10 +305,10 @@ describe('リアル売上の記録（要件§11.7）', () => {
     },
   };
 
-  it('リアル売上の月は、確定値・チャネル明細・読取値と確定値・ファイルの指紋を残す', async () => {
+  it('確定値・チャネル明細・読取値と確定値・ファイルの指紋を残す', async () => {
     const db = await open();
     const runId = db.createRun('2026-09');
-    db.saveSales(runId, '2026-09', { method: 'real', adoptedSales: 1164465.105, originalC4: 1234567, confirmed, actorRole: 'ADMIN' });
+    db.saveSales(runId, '2026-09', { adoptedSales: 1164465.105, originalC4: 1234567, confirmed, actorRole: 'ADMIN' });
     const s = db.getSales(runId);
     expect(s.monthly).toMatchObject({ method: 'real', real_sales: '1164465.105', fee_total: '59901.895', container_qty: 255, original_c4: '1234567' });
     expect(s.channels.map((c) => [c.channel_id, c.fee])).toEqual([['menu', '469'], ['sharedeli', '8250.825']]);
@@ -317,19 +317,23 @@ describe('リアル売上の記録（要件§11.7）', () => {
     expect(s.files).toHaveLength(1);
   });
 
-  it('手入力方式の月も、方式だけは記録する', async () => {
+  it('未確定のまま保存しても、採用した売上と元の C4 は残る', async () => {
     const db = await open();
     const runId = db.createRun('2026-08');
-    db.saveSales(runId, '2026-08', { method: 'manual', adoptedSales: 1234567, originalC4: 1234567, confirmed: null, actorRole: 'ADMIN' });
-    expect(db.salesMethodOf('2026-08')).toBe('manual');
-    expect(db.salesMethodOf('2026-07')).toBeNull();
+    db.saveSales(runId, '2026-08', { adoptedSales: 1234567, originalC4: 1234567, confirmed: null, actorRole: 'ADMIN' });
+    const s = db.getSales(runId);
+    expect(s.monthly).toMatchObject({ adopted_sales: '1234567', original_c4: '1234567', real_sales: null });
+    expect(s.channels).toEqual([]);
   });
 
-  it('同じ月を処理し直したら、いちばん新しい版の方式を返す', async () => {
+  it('同じ月を処理し直したら、版ごとに記録が残る', async () => {
     const db = await open();
-    db.saveSales(db.createRun('2026-09'), '2026-09', { method: 'manual', adoptedSales: 1, originalC4: 1, confirmed: null, actorRole: 'ADMIN' });
-    db.saveSales(db.createRun('2026-09'), '2026-09', { method: 'real', adoptedSales: 1, originalC4: 1, confirmed, actorRole: 'ADMIN' });
-    expect(db.salesMethodOf('2026-09')).toBe('real');
+    const first = db.createRun('2026-09');
+    const second = db.createRun('2026-09');
+    db.saveSales(first, '2026-09', { adoptedSales: 1, originalC4: 1, confirmed: null, actorRole: 'ADMIN' });
+    db.saveSales(second, '2026-09', { adoptedSales: 1164465.105, originalC4: 1, confirmed, actorRole: 'ADMIN' });
+    expect(db.getSales(first).monthly).toMatchObject({ real_sales: null });
+    expect(db.getSales(second).monthly).toMatchObject({ real_sales: '1164465.105' });
   });
 
   it('マスタの写しを保存し、別のPCで開いたときに復元できる', async () => {

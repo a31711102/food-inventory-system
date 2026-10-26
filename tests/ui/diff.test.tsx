@@ -258,10 +258,8 @@ describe('M-07b 登録外の商品も入力できる（要件§10-4）', () => {
 
     // 情報ログは STEP 2 に出る。
     // 再計算の完了（STEP 5 への遷移）を待たずにタブを押すと、あとから setStep(5) に上書きされる。
-    await h.user.click(buttonByText('次へ：売上確定'));
-    await waitFor(() => expect(document.body.textContent).toContain('STEP 5　売上確定'));
-    await h.user.click(buttonByText('計算して分析へ'));
-    await waitFor(() => expect(document.body.textContent).toContain('STEP 6　分析・出力'));
+    await h.user.click(buttonByText('次へ：売上計算'));
+    await waitFor(() => expect(document.body.textContent).toContain('STEP 5　売上計算'));
     await goToStep(h, 2);
     await waitFor(() => expect(issuesOf('I005')).toHaveLength(1));
     expect(issuesOf('I005')[0]!.message).toContain('000140');

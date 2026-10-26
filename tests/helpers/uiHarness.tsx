@@ -13,6 +13,7 @@ import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { expect, vi } from 'vitest';
 import App from '@/ui/App';
 import { TARGET_YM, type TestFile } from './testdataSet';
+import { HARNESS_SALES, harnessMasters, harnessSalesCsv } from './realSalesData';
 
 /** 取込欄の並び（画面の①〜④）。 */
 export const SLOTS = ['master', 'previous', 'orders', 'unitMaster'] as const;
@@ -44,8 +45,13 @@ function toFile(file: TestFile): File {
  * localStorage は毎回消す。取込履歴が残っていると W008（同一ファイルの再取込）が
  * 出てケースごとの期待値が変わるため（手順書 §2.3 のリセットに相当）。
  */
-export function setupApp(options: { keepHistory?: boolean } = {}): Harness {
+export function setupApp(options: { keepHistory?: boolean; masters?: boolean } = {}): Harness {
   if (!options.keepHistory) localStorage.clear();
+
+  // STEP 5（売上計算）には料率・容器単価が要る。実運用では管理者が初回に取り込む。
+  // 画面テストでは毎回 Excel を取り込ませる代わりに、保存済みの状態から始める。
+  // 未登録のとき（E019）の画面を確かめるケースだけ masters: false を渡す。
+  if (options.masters !== false) localStorage.setItem('fis.realSales.masters.v1', JSON.stringify(harnessMasters()));
 
   // 1つのテストの中で cleanup() → setupApp() と描画し直すことがあるため、毎回張り直す
   vi.restoreAllMocks();
@@ -237,14 +243,54 @@ export async function goToStep(h: Harness, step: 1 | 2 | 3 | 4 | 5 | 6): Promise
   await waitFor(() => expect(document.body.textContent).toContain(`STEP ${step}　`));
 }
 
-/** STEP 3 → STEP 4 → STEP 5 と進める（途中で再計算が走る）。 */
+/**
+ * STEP 5（売上計算）を通す。
+ *
+ * happy-dom では OCR（WASM・Canvas）が動かないので、写真を使わず手入力で確定する。
+ * これは実運用でも「写真が読めないときの代替経路」として用意してある道と同じ。
+ * 確定値は当月マスタの C4 と同じ 5,000,000 になるため、以降の期待値は変わらない。
+ */
+export async function confirmSales(h: Harness): Promise<void> {
+  const slot = [...document.querySelectorAll('.file-slot')].find((s) => s.textContent?.includes('商品別売上CSV'));
+  if (!slot) throw new Error('商品別売上CSVの欄が見つかりません');
+  await h.user.upload(
+    slot.querySelector('input[type=file]') as HTMLInputElement,
+    new File([harnessSalesCsv().slice().buffer as ArrayBuffer], '商品別売上.csv'),
+  );
+  await waitFor(() => expect(document.body.textContent).toContain(`${HARNESS_SALES.containerQty} 個`));
+
+  const type = (label: string, value: string): void => {
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+    if (!input) throw new Error(`入力欄が見つかりません: ${label}`);
+    fireEvent.change(input, { target: { value } });
+  };
+  type('営業月', TARGET_YM);
+  type('総計1（税抜値割引前）', HARNESS_SALES.grossTotal);
+  type('値割引合計', '0');
+  type('（値割引消費税）', '0');
+  type('売掛（合計）', HARNESS_SALES.receivableAmount);
+  await h.user.click(buttonByText('内訳の行を追加'));
+  type('追加1の表記', HARNESS_SALES.receivableLabel);
+  type('追加1の金額', HARNESS_SALES.receivableAmount);
+
+  await waitFor(() => expect(document.body.textContent).toContain('当月売上高（食材費計算用）'));
+  const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))?.querySelector('input');
+  if (!check) throw new Error('確認のチェックが見つかりません');
+  await h.user.click(check);
+  await clickAndSettle(h, buttonByText('この内容で確定'));
+  // 確定すると再計算が走る。その間はボタンが「再計算中…」なので、戻るまで待つ
+  await waitFor(() => expect(findButton('次へ：分析・出力')).not.toBeNull(), { timeout: 20000 });
+}
+
+/** STEP 3 → STEP 4 → STEP 5（売上計算を確定）→ STEP 6 と進める（途中で再計算が走る）。 */
 export async function advanceToAnalyze(h: Harness): Promise<void> {
   await goToStep(h, 3);
   await clickAndSettle(h, buttonByText('自店購入入力へ'));
   await waitFor(() => expect(document.body.textContent).toContain('STEP 4　自店購入入力'));
-  await clickAndSettle(h, buttonByText('次へ：売上確定'));
-  await waitFor(() => expect(document.body.textContent).toContain('STEP 5　売上確定'));
-  await clickAndSettle(h, buttonByText('計算して分析へ'));
+  await clickAndSettle(h, buttonByText('次へ：売上計算'));
+  await waitFor(() => expect(document.body.textContent).toContain('STEP 5　売上計算'));
+  await confirmSales(h);
+  await clickAndSettle(h, buttonByText('次へ：分析・出力'));
   await waitFor(
     () => {
       expect(document.body.textContent).toContain('STEP 6　分析・出力');

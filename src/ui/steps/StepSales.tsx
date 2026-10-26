@@ -1,9 +1,9 @@
 /**
- * STEP 5 売上確定（要件§11.6）。
+ * STEP 5 売上計算（要件§11.6）。
  *
- * 手入力方式（従来どおり分析用 C4 ＝ 総計1）か、リアル売上方式かを選ぶ。
- * リアル売上方式では、ジャーナル写真を端末内で読み取り、商品別売上CSVから容器対象出数を数え、
- * 料率・容器単価を当てて「食材費計算用リアル売上」を出す。
+ * ジャーナル写真を端末内で読み取り、商品別売上CSVから容器対象出数を数え、
+ * 料率・容器単価を当てて当月売上高（総計1 − 代行手数料 − 弁当容器代）を出す。
+ * 算出方式の選択は置かない。画面に出すのは計算の中身だけにして、操作者が迷わないようにする。
  *
  * 読み取り値は候補であり、写真の該当行と並べて照合し、人が確定する。
  * 検算（①売掛合計・②CSV）が合わない・補正した・消去法で決めた項目は目立たせる。
@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, Note, IssueList, FileSlot } from '../components';
 import type { Role } from '../App';
-import type { ConfirmedRealSales, SalesMethod, UploadedFile } from '../../app/pipeline';
+import type { ConfirmedRealSales, UploadedFile } from '../../app/pipeline';
 import { computeRealSales, type JournalEntry, type PreviousRealSales, type ReceivableLine } from '../../domain/realSales/compute';
 import { toDecimalString, type Fixed } from '../../domain/realSales/fixed';
 import { channelRow, EPOCH_YM, KNOWN_CHANNELS, resolveMasters, type RealSalesMasters } from '../../domain/realSales/masters';
@@ -48,8 +48,6 @@ const SOURCE_TEXT: Record<FieldReading['source'], { text: string; cls: string }>
 export function StepSales({
   targetYm,
   role,
-  method,
-  onSetMethod,
   masters,
   onSetMasters,
   confirmed,
@@ -62,8 +60,6 @@ export function StepSales({
 }: {
   targetYm: string;
   role: Role;
-  method: SalesMethod;
-  onSetMethod: (m: SalesMethod) => void;
   masters: RealSalesMasters;
   onSetMasters: (m: RealSalesMasters) => void;
   confirmed: ConfirmedRealSales | null;
@@ -76,56 +72,27 @@ export function StepSales({
 }): JSX.Element {
   return (
     <>
-      <Panel title="STEP 5　売上確定" hint="原価率の分母にする当月売上高を決めます。">
-        <div className="method-choice">
-          <label className={method === 'manual' ? 'method active' : 'method'}>
-            <input type="radio" name="sales-method" checked={method === 'manual'} onChange={() => onSetMethod('manual')} />
-            <span>
-              <strong>手入力方式</strong>（これまでどおり）
-              <br />
-              <span className="muted">当月本部マスタの分析用 C4（総計1）を使います。空なら次の画面で入力します。</span>
-            </span>
-          </label>
-          <label className={method === 'real' ? 'method active' : 'method'}>
-            <input type="radio" name="sales-method" checked={method === 'real'} onChange={() => onSetMethod('real')} />
-            <span>
-              <strong>リアル売上方式</strong>
-              <br />
-              <span className="muted">総計1 − 代行手数料 − 弁当容器代。ジャーナル写真と商品別売上CSVから計算します。</span>
-            </span>
-          </label>
-        </div>
-
-        {method === 'manual' ? (
-          <>
-            <Note>
-              当月本部マスタの当月売上高（分析用 C4）は <strong>{masterC4 === null ? '未入力' : `${masterC4.toLocaleString('ja-JP')} 円`}</strong> です。
-              {masterC4 === null ? ' 次の画面（分析・出力）で入力してください。' : ''}
-            </Note>
-            <div className="actions">
-              <button type="button" className="primary" onClick={() => void onNext()} disabled={running}>
-                {running ? '再計算中…' : '計算して分析へ'}
-              </button>
-            </div>
-          </>
-        ) : null}
+      <Panel title="STEP 5　売上計算" hint="原価率の分母にする当月売上高を計算し、確定します。">
+        <Note>
+          <strong>当月売上高 ＝ 総計1 − 代行手数料 − 弁当容器代</strong>
+          <br />
+          ジャーナル（店舗売上レポート）の写真と、POS の商品別売上CSVから計算します。写真が無い月は、写真を見ながら下の表に手で入力しても計算できます。
+        </Note>
       </Panel>
 
-      {method === 'real' ? (
-        <RealSalesForm
-          targetYm={targetYm}
-          role={role}
-          masters={masters}
-          onSetMasters={onSetMasters}
-          confirmed={confirmed}
-          onConfirm={onConfirm}
-          onUnconfirm={onUnconfirm}
-          previous={previous}
-          masterC4={masterC4}
-          onNext={onNext}
-          running={running}
-        />
-      ) : null}
+      <RealSalesForm
+        targetYm={targetYm}
+        role={role}
+        masters={masters}
+        onSetMasters={onSetMasters}
+        confirmed={confirmed}
+        onConfirm={onConfirm}
+        onUnconfirm={onUnconfirm}
+        previous={previous}
+        masterC4={masterC4}
+        onNext={onNext}
+        running={running}
+      />
     </>
   );
 }
@@ -528,7 +495,7 @@ function RealSalesForm({
                 <td className="num">{yen(b.containerCost)}</td>
               </tr>
               <tr className="total">
-                <th>食材費計算用リアル売上</th>
+                <th>当月売上高（食材費計算用）</th>
                 <td className="num">
                   <strong>{yen(b.realSales)}</strong>
                 </td>
@@ -540,7 +507,7 @@ function RealSalesForm({
         )}
         {b && masterC4 !== null && Number(toDecimalString(b.realSales)) !== masterC4 ? (
           <p className="muted">
-            当月本部マスタの C4 は {masterC4.toLocaleString('ja-JP')} 円です。確定すると、出力するExcelの C4 はリアル売上になります（差額 {(Number(toDecimalString(b.realSales)) - masterC4).toLocaleString('ja-JP', { maximumFractionDigits: 3 })} 円）。
+            当月本部マスタの C4 は {masterC4.toLocaleString('ja-JP')} 円です。確定すると、出力するExcelの C4 はここで計算した値になります（差額 {(Number(toDecimalString(b.realSales)) - masterC4).toLocaleString('ja-JP', { maximumFractionDigits: 3 })} 円）。
           </p>
         ) : null}
 
@@ -550,7 +517,7 @@ function RealSalesForm({
         {confirmed ? (
           <>
             <Note>
-              <strong>リアル売上を確定しました：{yen(confirmed.realSales)} 円</strong>。分析・出力の原価率と、出力するExcelの C4 にこの値を使います。
+              <strong>当月売上高を確定しました：{yen(confirmed.realSales)} 円</strong>。分析・出力の原価率と、出力するExcelの C4 にこの値を使います。
               写真・CSV・読み取り値・マスタを変えると確定は取り消されます。
             </Note>
             <div className="actions">

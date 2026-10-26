@@ -154,7 +154,7 @@ export async function exportWorkbook(
       if (input.report.totalSales === null) {
         const issue = createIssue(
           "E011",
-          "当月売上高が未設定のため出力できません。分析用シートの当月売上高を確認するか、分析・出力画面で入力してください。",
+          "当月売上高が未設定のため出力できません。STEP 5（売上計算）で当月売上高を確定してください。",
           {
             fileName: undefined,
             sheetName: analysis.name,
