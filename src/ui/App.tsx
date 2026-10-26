@@ -14,6 +14,7 @@ import { loadMasters, loadSalesHistory, recordSales, saveMasters, type SalesHist
 import { DatabasePanel } from './steps/DatabasePanel';
 import type { FileKind, ImportedFileRecord } from '../ingest/fileIdentity';
 import { appendImportHistory, loadImportHistory } from '../storage/importHistory';
+import { clearUnitMaster, loadUnitMaster, saveUnitMaster, type SavedUnitMaster } from '../storage/unitMasterStore';
 
 export type { FileKind };
 export type Role = 'ADMIN' | 'STAFF';
@@ -46,11 +47,12 @@ export default function App(): JSX.Element {
   });
   const [ownPurchases, setOwnPurchases] = useState<OwnPurchaseInput[]>([]);
   const [approvedCodes, setApprovedCodes] = useState<Set<string>>(new Set());
-  const [confirmedFactors, setConfirmedFactors] = useState<Map<string, number>>(new Map());
   const [lossAmountOverride, setLossAmountOverride] = useState<number | null>(null);
   /** 確定した売上の履歴（前月比の変動判定 W031 に使う。要件§11） */
   const [salesHistory, setSalesHistory] = useState<Record<string, SalesHistoryEntry>>(() => loadSalesHistory());
   const [realSalesConfirmed, setRealSalesConfirmed] = useState<ConfirmedRealSales | null>(null);
+  /** 登録済みの単位計算マスタ。指定が無い月はこれを使う（2026-10-26 運用変更） */
+  const [savedUnitMaster, setSavedUnitMaster] = useState<SavedUnitMaster | null>(() => loadUnitMaster());
   const [masters, setMastersState] = useState<RealSalesMasters>(() => loadMasters());
   const setMasters = useCallback((m: RealSalesMasters) => {
     setMastersState(m);
@@ -73,7 +75,7 @@ export default function App(): JSX.Element {
    * setState は非同期なので、直後に recalc() を呼ぶと古い値で計算してしまう
    * （換算係数を登録しても画面が変わらない、という形で現れていた）。
    */
-  const recalc = useCallback(async (overrides?: { confirmedFactors?: Map<string, number>; realSales?: ConfirmedRealSales | null }) => {
+  const recalc = useCallback(async (overrides?: { realSales?: ConfirmedRealSales | null }) => {
     if (!files.master) return;
     setRunning(true);
     setError(null);
@@ -83,9 +85,8 @@ export default function App(): JSX.Element {
         master: files.master,
         previous: files.previous,
         orders: files.orders,
-        unitMaster: files.unitMaster,
+        unitMaster: files.unitMaster ?? savedUnitMaster,
         ownPurchases,
-        confirmedFactors: overrides?.confirmedFactors ?? confirmedFactors,
         approvedOpeningCodes: approvedCodes,
         importHistory,
         lossAmountOverride,
@@ -106,7 +107,7 @@ export default function App(): JSX.Element {
     }
     // importHistory は判定に使うだけで、更新をトリガに再計算しない
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, targetYm, ownPurchases, confirmedFactors, lossAmountOverride, approvedCodes, realSalesConfirmed]);
+  }, [files, targetYm, ownPurchases, lossAmountOverride, approvedCodes, realSalesConfirmed, savedUnitMaster]);
 
   // 入力が変わったら結果を無効化する
   useEffect(() => {
@@ -127,10 +128,22 @@ export default function App(): JSX.Element {
       : null;
   })();
 
+  // STEP を移ったら画面の先頭へ戻す。下の方に表示されたまま次へ進むと、
+  // その STEP の最初の操作を見落とすため（2026-10-26）
+  useEffect(() => {
+    try {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {
+      // scrollTo を持たない環境（画面テストなど）では何もしない
+    }
+  }, [step]);
+
   const canProceed = useMemo(() => Boolean(result) && !stale, [result, stale]);
 
   const setFile = (kind: FileKind, file: UploadedFile | null): void => {
     setFiles((prev) => ({ ...prev, [kind]: file }));
+    // 単位計算マスタは登録しておき、翌月以降は指定しなくても使えるようにする
+    if (kind === 'unitMaster' && file) setSavedUnitMaster(saveUnitMaster(file));
   };
 
   return (
@@ -192,6 +205,11 @@ export default function App(): JSX.Element {
           onSetTargetYm={setTargetYm}
           files={files}
           onSetFile={setFile}
+          savedUnitMaster={savedUnitMaster}
+          onClearSavedUnitMaster={() => {
+            clearUnitMaster();
+            setSavedUnitMaster(null);
+          }}
           onRun={async () => {
             await recalc();
             setStep(2);
@@ -209,14 +227,6 @@ export default function App(): JSX.Element {
           result={result}
           approvedCodes={approvedCodes}
           onApprove={(codes) => setApprovedCodes(codes)}
-          confirmedFactors={confirmedFactors}
-          onConfirmFactors={async (factors) => {
-            setConfirmedFactors(factors);
-            // 登録した係数で即座に計算し直す。そうしないと画面が何も変わらず、
-            // 登録できたのか操作者が判断できない。
-            await recalc({ confirmedFactors: factors });
-          }}
-          running={running}
           onNext={() => setStep(4)}
         />
       ) : null}

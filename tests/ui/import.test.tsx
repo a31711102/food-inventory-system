@@ -3,11 +3,12 @@
  * 画面テスト M-01〜M-04（STEP 1〜2：取込）。
  * 手順: docs/06_画面テスト手順書.md §4
  */
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { buildNormalSet, TARGET_YM } from '../helpers/testdataSet';
 import {
   setupApp,
+  restartApp,
   selectFile,
   clearFile,
   setTargetYm,
@@ -19,6 +20,7 @@ import {
   buttonByText,
   findButton,
   badgeCounts,
+  issuesOf,
   waitFor,
 } from '../helpers/uiHarness';
 
@@ -27,6 +29,62 @@ beforeAll(async () => {
   set = await buildNormalSet();
 });
 afterEach(() => cleanup());
+
+describe('M-05b 単位計算マスタは登録して使い回す（2026-10-26 運用変更）', () => {
+  it('指定すると登録され、画面を開き直しても登録済みとして使われる', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+    const withFile = issuesOf('W016').length;
+
+    // 画面を開き直す（＝翌月の処理を始める状況）。④を指定しなくても登録済みが使われる
+    const h2 = restartApp(h);
+    await setTargetYm(h2, TARGET_YM);
+    for (const slot of ['master', 'previous', 'orders'] as const) {
+      await selectFile(h2, slot, set[slot]);
+    }
+    expect(document.body.textContent).toContain('単位計算マスタは登録済みです');
+
+    await runImport(h2);
+    // ④を指定したときと同じ結果になる＝登録済みの単位計算マスタで換算している
+    expect(issuesOf('W016').length).toBe(withFile);
+  }, 60000);
+
+  it('登録を削除すると、④が空の取込では当月マスタのP列で換算する（W016）', async () => {
+    const h = setupApp();
+    await importNormalSet(h, set);
+
+    const h2 = restartApp(h);
+    await setTargetYm(h2, TARGET_YM);
+    await h2.user.click(buttonByText('登録を削除'));
+    await waitFor(() => expect(document.body.textContent).not.toContain('単位計算マスタは登録済みです'));
+
+    for (const slot of ['master', 'previous', 'orders'] as const) {
+      await selectFile(h2, slot, set[slot]);
+    }
+    await runImport(h2);
+    // 単位計算マスタが無いので、当月マスタのP列で換算した商品が増える
+    expect(issuesOf('W016')[0]!.message).toContain('単位計算マスタ');
+  }, 60000);
+});
+
+describe('STEP を移ったら画面の先頭へ戻る（2026-10-26）', () => {
+  it('次へ進むボタンでも、上のタブでも先頭へ戻る', async () => {
+    const scrollTo = vi.fn();
+    vi.stubGlobal('scrollTo', scrollTo);
+    try {
+      const h = setupApp();
+      await importNormalSet(h, set);
+      const afterImport = scrollTo.mock.calls.length;
+      expect(afterImport).toBeGreaterThan(0);
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'smooth' });
+
+      await goToStep(h, 3);
+      expect(scrollTo.mock.calls.length).toBeGreaterThan(afterImport);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60000);
+});
 
 describe('M-01 取込前はSTEP2以降が開けない（J-1）', () => {
   it('STEP 2〜5 のタブが押せない', () => {

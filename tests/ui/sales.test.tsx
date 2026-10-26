@@ -209,8 +209,9 @@ describe('STEP 5 売上計算', () => {
     await h.user.click(buttonByText('次へ：分析・出力'));
     await waitFor(() => expect(text()).toContain('STEP 6　分析・出力'));
     expect(text()).toContain('STEP 5 の売上計算で確定した値');
-    // 目安は総計1基準で比べる（店舗回答）
-    expect(text()).toContain('ロス引き後原価率（総計1基準）');
+    // ②の判定は総計1基準で比べる（店舗回答）
+    expect(text()).toContain('② 40% との比較（例）');
+    expect(text()).toContain('総計1を売上とした原価率で比べます');
 
     const out = await downloadWorkbook(h);
     const wb = await XlsxWorkbook.load(out.data);

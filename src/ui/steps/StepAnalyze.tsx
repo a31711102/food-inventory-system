@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Panel, Note, IssueList, IssueBadges, Kpi } from '../components';
 import type { PipelineResult } from '../../app/pipeline';
-import { describeLevel, LEVEL_TARGET_PERCENT } from '../../domain/anomaly';
+import { ANOMALY_THRESHOLD_PT, describeLevel, LEVEL_TARGET_PERCENT, LEVEL_TOLERANCE_PT } from '../../domain/anomaly';
 import { exportWorkbook, ExportBlockedError } from '../../export/exporter';
 import { HQ_MASTER_PROFILE } from '../../ingest/profiles';
 import { downloadWorkbook } from '../../storage/fileSystem';
@@ -43,6 +43,9 @@ export function StepAnalyze({
   const hasSales = result.sales.grossTotal !== null;
   const levelRate = hasSales ? result.sales.grossBasedCostRatePercent : report.costRateAfterLossPercent;
   const level = describeLevel(levelRate);
+  // 40% は運用上の「例」。実際の値と混同しないよう、画面の言葉を例にそろえる
+  const levelText =
+    level.label === '目安どおり' ? '例の範囲内' : level.label === '目安から乖離' ? '例から外れている' : '算出不可';
   const overallAnomaly = anomalies.some((a) => a.scope === 'OVERALL');
 
   const productRows = useMemo(() => {
@@ -152,9 +155,45 @@ export function StepAnalyze({
       </Panel>
 
       <Panel
-        title="異常判定（前月比）"
-        hint="前月からのパーセントポイント差が閾値を超えた指標を表示します。Release 1 では原因推定は行いません。"
+        title="判定"
+        hint="① 前月と比べてどう動いたか、② 原価率が例の 40% ±2.0pt に収まっているかの2つを見ます。原因推定は行いません。"
       >
+        <div className="kpi-row">
+          <div className={overallAnomaly ? 'kpi alert' : 'kpi'}>
+            <div className="kpi-label">① 前月比較（ロス引き後原価率）</div>
+            <div className="kpi-value">
+              {previousYm === null ? '—' : overallAnomaly ? '閾値を超える変動あり' : '閾値内'}
+            </div>
+            <div className="kpi-note">
+              {previousYm === null
+                ? '前月データがないため比較できません'
+                : `前月差が ±${ANOMALY_THRESHOLD_PT.toFixed(1)}pt 以上なら「変動あり」`}
+            </div>
+          </div>
+          <div className={level.label === '目安から乖離' ? 'kpi alert' : 'kpi'}>
+            <div className="kpi-label">② {LEVEL_TARGET_PERCENT}% との比較（例）</div>
+            <div className="kpi-value">
+              {formatPercent(levelRate)}
+              {level.deltaFromTargetPt !== null ? (
+                <span className="muted" style={{ fontSize: 12 }}>（例との差 {formatDiff(level.deltaFromTargetPt, 'pt')}）</span>
+              ) : null}
+            </div>
+            <div className="kpi-note">
+              判定: <strong>{levelText}</strong>（例の {LEVEL_TARGET_PERCENT}% ±{LEVEL_TOLERANCE_PT.toFixed(1)}pt に収まっているか）
+              {hasSales ? '。総計1を売上とした原価率で比べます' : ''}
+            </div>
+          </div>
+        </div>
+
+        {hasSales ? (
+          <p className="muted">
+            ②の例 {LEVEL_TARGET_PERCENT}% は総計1を売上としたときの値なので、総計1基準の原価率で比べています
+            （当月売上高を分母にすると {formatPercent(report.costRateAfterLossPercent)}）。
+            {LEVEL_TARGET_PERCENT}% は運用上の例であって、店舗ごとの正式な目標値ではありません。
+          </p>
+        ) : null}
+
+        <h3>① 前月比較の内訳</h3>
         {!previousYm ? (
           <p className="muted">前月データがないため比較できません。当月値のみ表示しています。</p>
         ) : anomalies.length === 0 ? (
@@ -185,24 +224,6 @@ export function StepAnalyze({
             </tbody>
           </table>
         )}
-      </Panel>
-
-      {/* 水準の目安は異常判定と別セクションに分けて表示する（要件§6） */}
-      <Panel
-        title="水準の目安（参考）"
-        hint="運用上の目安であり、前月比による異常判定とは無関係です。ここでの乖離は異常ではありません。"
-      >
-        {hasSales ? (
-          <p className="muted">
-            目安の {LEVEL_TARGET_PERCENT}% は総計1を売上としたときの値なので、総計1基準の原価率で比べます
-            （当月売上高を分母にすると {formatPercent(report.costRateAfterLossPercent)}）。
-          </p>
-        ) : null}
-        <p>
-          ロス引き後原価率{hasSales ? '（総計1基準）' : ''} <strong>{formatPercent(levelRate)}</strong>／目安 {LEVEL_TARGET_PERCENT}%
-          　判定: <strong>{level.label}</strong>
-          {level.deltaFromTargetPt !== null ? `（目安との差 ${formatDiff(level.deltaFromTargetPt, 'pt')}）` : ''}
-        </p>
       </Panel>
 
       <Panel title="レポート比較（前月比）" hint="金額の差は円、率の差はパーセントポイント（pt）で表示します。">

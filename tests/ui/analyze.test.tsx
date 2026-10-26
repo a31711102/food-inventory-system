@@ -43,27 +43,31 @@ function panelTitles(): string[] {
   return [...document.querySelectorAll('.panel h2')].map((e) => e.textContent ?? '');
 }
 
-describe('M-12 異常判定と水準目安が分かれている（J-6）', () => {
-  it('別々のセクションとして表示される', async () => {
+describe('M-12 判定は①前月比較と②40%比較を並べて出す（J-6）', () => {
+  it('1つの「判定」パネルに①と②が並ぶ', async () => {
     const h = setupApp();
     await importNormalSet(h, set);
     await advanceToAnalyze(h);
 
     const titles = panelTitles();
-    expect(titles).toContain('異常判定（前月比）');
-    expect(titles).toContain('水準の目安（参考）');
+    expect(titles).toContain('判定');
     expect(titles).toContain('レポート比較（前月比）');
-    expect(titles.indexOf('異常判定（前月比）')).toBeLessThan(titles.indexOf('水準の目安（参考）'));
+    expect(titles).not.toContain('水準の目安（参考）');
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('① 前月比較（ロス引き後原価率）');
+    expect(text).toContain('② 40% との比較（例）');
   }, 60000);
 
-  it('目安のセクションに「異常判定とは無関係」と明記されている', async () => {
+  it('40% は「例」であり、実際の値と区別できるように書かれている', async () => {
     const h = setupApp();
     await importNormalSet(h, set);
     await advanceToAnalyze(h);
 
-    expect(document.body.textContent).toContain(
-      '運用上の目安であり、前月比による異常判定とは無関係です',
-    );
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('例の 40% ±2.0pt に収まっているか');
+    expect(text).toContain('運用上の例であって、店舗ごとの正式な目標値ではありません');
+    expect(text).not.toContain('水準の目安（参考）');
   }, 60000);
 
   it('前月比の差はpt表記で、閾値2.0ptが併記される', async () => {

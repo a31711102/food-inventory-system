@@ -1,13 +1,16 @@
 import { Panel, FileSlot, Note } from '../components';
 import type { AppFiles, FileKind } from '../App';
 import type { UploadedFile } from '../../app/pipeline';
-import { formatDate, previousYm } from '../format';
+import type { SavedUnitMaster } from '../../storage/unitMasterStore';
+import { formatDate, formatDateTime, previousYm } from '../format';
 
 export function StepUpload({
   targetYm,
   onSetTargetYm,
   files,
   onSetFile,
+  savedUnitMaster,
+  onClearSavedUnitMaster,
   onRun,
   running,
   today = new Date(),
@@ -16,6 +19,9 @@ export function StepUpload({
   onSetTargetYm: (ym: string) => void;
   files: AppFiles;
   onSetFile: (kind: FileKind, file: UploadedFile | null) => void;
+  /** 登録済みの単位計算マスタ。指定が無ければこれを使う */
+  savedUnitMaster: SavedUnitMaster | null;
+  onClearSavedUnitMaster: () => void;
   onRun: () => void | Promise<void>;
   running: boolean;
   /** 「初期値は今日の前月」の説明に出す日付。テストから固定するために引数にしている */
@@ -88,13 +94,24 @@ export function StepUpload({
       />
 
       <FileSlot
-        title="④ 単位計算マスタ（推奨）"
-        description="期中仕入の換算係数（計算単位）の取得元です。未指定でも当月マスタの非表示列で代用できますが、その列は帳票上で確認できないため、本ファイルの指定を推奨します。"
+        title="④ 単位計算マスタ（登録しておけば毎月の指定は不要）"
+        description="期中仕入の換算係数（計算単位）の取得元です。指定すると、このPCに登録して翌月以降も使います。新しいマスタが届いた月だけ指定し直してください。"
         accept=".xlsx,.xlsm,.csv"
         file={files.unitMaster}
         onSelect={(f) => void select('unitMaster', f)}
         onClear={() => onSetFile('unitMaster', null)}
       />
+
+      {!files.unitMaster && savedUnitMaster ? (
+        <Note>
+          単位計算マスタは登録済みです：<strong>{savedUnitMaster.fileName}</strong>
+          （{formatDateTime(savedUnitMaster.savedAt)} に登録）。この月もこれを使います。
+          新しいマスタに入れ替えるときは、上の④の欄に新しいファイルを指定してください。
+          <button type="button" className="linklike" style={{ marginLeft: 8 }} onClick={onClearSavedUnitMaster}>
+            登録を削除
+          </button>
+        </Note>
+      ) : null}
 
       <div className="actions">
         <button type="button" className="primary" onClick={() => void onRun()} disabled={!files.master || running}>

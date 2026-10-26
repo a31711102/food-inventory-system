@@ -9,52 +9,18 @@ export function StepDiff({
   result,
   approvedCodes,
   onApprove,
-  confirmedFactors,
-  onConfirmFactors,
-  running,
   onNext,
 }: {
   result: PipelineResult;
   approvedCodes: Set<string>;
   onApprove: (codes: Set<string>) => void;
-  confirmedFactors: Map<string, number>;
-  onConfirmFactors: (factors: Map<string, number>) => void | Promise<void>;
-  running: boolean;
   onNext: () => void;
 }): JSX.Element {
   const [filter, setFilter] = useState<Filter>('ALL');
   const [query, setQuery] = useState('');
-  const [draftFactors, setDraftFactors] = useState<Record<string, string>>({});
-  /** 登録直後の結果。押しても画面が変わらないと登録できたか分からないため表示する */
-  const [registered, setRegistered] = useState<{ count: number; reflected: number } | null>(null);
 
   const pending = result.factorConfirmations;
   const pendingWithOrder = pending.filter((f) => f.hasOrder);
-
-  const factorValue = (code: string, suggested: number | null): string => {
-    if (draftFactors[code] !== undefined) return draftFactors[code]!;
-    const already = confirmedFactors.get(code);
-    if (already !== undefined) return String(already);
-    return suggested === null ? '' : String(suggested);
-  };
-
-  /** 入力欄が埋まっていて、値として使える行 */
-  const registrable = pending.filter((f) => {
-    const raw = factorValue(f.code, f.suggestedFactor);
-    const n = Number(raw);
-    return raw !== '' && Number.isFinite(n) && n > 0;
-  });
-
-  const commitFactors = async (): Promise<void> => {
-    const next = new Map(confirmedFactors);
-    for (const f of registrable) next.set(f.code, Number(factorValue(f.code, f.suggestedFactor)));
-    setDraftFactors({});
-    setRegistered({
-      count: registrable.length,
-      reflected: registrable.filter((f) => f.hasOrder).length,
-    });
-    await onConfirmFactors(next);
-  };
 
   const nameChanged = result.productDiffs.filter((d) => d.nameChanged);
   const categoryChanged = result.productDiffs.filter((d) => d.categoryChanged);
@@ -240,47 +206,19 @@ export function StepDiff({
         </div>
       </Panel>
 
-      {registered && pending.length === 0 ? (
-        <Panel title="新規商品の換算係数" hint="登録が完了しました。">
-          <Note>
-            換算係数 <strong>{registered.count} 件</strong>を登録しました。
-            {registered.reflected > 0 ? (
-              <>
-                {' '}
-                うち <strong>{registered.reflected} 件</strong>は当月に発注があり、
-                <strong>期中仕入に反映済み</strong>です。
-              </>
-            ) : (
-              ' 当月に発注はないため、次月以降に使われます。'
-            )}
-            {' '}登録した係数は単位計算マスタより優先され、履歴に保存されます。
-          </Note>
-          <div className="actions">
-            <button type="button" className="primary" onClick={onNext}>
-              次へ：自店購入入力
-            </button>
-            <span className="muted">
-              反映後の期中仕入は STEP 5 の商品別比較で確認できます。
-            </span>
-          </div>
-        </Panel>
-      ) : null}
-
       {pending.length > 0 ? (
         <Panel
-          title="新規商品の換算係数"
-          hint="前月になく今月から登録された商品のうち、単位計算マスタに計算単位がないものです。発注数を棚卸単位へ換算するために必要です。"
+          title="換算係数が足りない商品"
+          hint="単位計算マスタに計算単位が無い商品です。発注数を棚卸単位へ換算できないため、期中仕入に反映できません。"
         >
           <Note variant={pendingWithOrder.length > 0 ? 'warn' : 'info'}>
             {pendingWithOrder.length > 0 ? (
               <>
-                このうち <strong>{pendingWithOrder.length} 件は当月に発注があり</strong>、換算係数が期中仕入に直接影響します。
-                値を確認してください。初期値には当月マスタの「仕入れ単位」を表示しています。
+                <strong>{pendingWithOrder.length} 件は当月に発注があり</strong>、期中仕入に直接影響します。
+                単位計算マスタにこれらの商品を追加し、STEP 1 の④で入れ直してください。
               </>
             ) : (
-              <>
-                当月に発注のある商品はありません。次月以降に備えて登録しておくこともできます。
-              </>
+              <>当月に発注のある商品はありません。次月以降に備えて、単位計算マスタへの追加を本部に依頼してください。</>
             )}
           </Note>
 
@@ -294,57 +232,21 @@ export function StepDiff({
                   <th>分類</th>
                   <th>棚卸単位</th>
                   <th className="right">発注数</th>
-                  <th className="right">換算係数</th>
-                  <th className="right">換算後</th>
                 </tr>
               </thead>
               <tbody>
-                {pending.map((f) => {
-                  const raw = factorValue(f.code, f.suggestedFactor);
-                  const n = Number(raw);
-                  const valid = raw !== '' && Number.isFinite(n) && n > 0;
-                  return (
-                    <tr key={f.code} className={f.hasOrder ? 'anomaly' : undefined}>
-                      <td className="nowrap">{f.hasOrder ? '▲あり' : '—'}</td>
-                      <td className="code">{f.code}</td>
-                      <td>{f.name}</td>
-                      <td>{f.category}</td>
-                      <td>{f.inventoryUnit ?? '—'}</td>
-                      <td className="num">{f.orderQty === null ? '—' : formatQty(f.orderQty)}</td>
-                      <td className="num">
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          style={{ width: 90, textAlign: 'right' }}
-                          value={raw}
-                          onChange={(e) =>
-                            setDraftFactors((d) => ({ ...d, [f.code]: e.target.value }))
-                          }
-                        />
-                      </td>
-                      <td className="num">
-                        {f.orderQty !== null && valid ? formatQty(f.orderQty * n) : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {pending.map((f) => (
+                  <tr key={f.code} className={f.hasOrder ? 'anomaly' : undefined}>
+                    <td className="nowrap">{f.hasOrder ? '▲あり' : '—'}</td>
+                    <td className="code">{f.code}</td>
+                    <td>{f.name}</td>
+                    <td>{f.category}</td>
+                    <td>{f.inventoryUnit ?? '—'}</td>
+                    <td className="num">{f.orderQty === null ? '—' : formatQty(f.orderQty)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-          </div>
-
-          <div className="actions">
-            <button
-              type="button"
-              className="primary"
-              onClick={() => void commitFactors()}
-              disabled={running || registrable.length === 0}
-            >
-              {running ? '登録して再計算中…' : `この内容で登録（${registrable.length} 件）`}
-            </button>
-            <span className="muted">
-              登録した係数は単位計算マスタより優先され、履歴に保存されて次月以降も使われます。
-            </span>
           </div>
         </Panel>
       ) : null}

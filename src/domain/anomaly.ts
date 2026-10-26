@@ -39,9 +39,12 @@ export interface Anomaly {
   unit: 'pt';
 }
 
+/** 前月比の異常判定の閾値。これ以上動いたら「変動あり」とする。 */
+export const ANOMALY_THRESHOLD_PT = 2.0;
+
 export const DEFAULT_ANOMALY_RULES: readonly AnomalyRule[] = [
-  { scope: 'OVERALL', metric: 'COST_RATE_AFTER_LOSS', thresholdPt: 2.0 },
-  { scope: 'CATEGORY', metric: 'COST_RATE', thresholdPt: 2.0 },
+  { scope: 'OVERALL', metric: 'COST_RATE_AFTER_LOSS', thresholdPt: ANOMALY_THRESHOLD_PT },
+  { scope: 'CATEGORY', metric: 'COST_RATE', thresholdPt: ANOMALY_THRESHOLD_PT },
 ] as const;
 
 /** 率は小数第2位に丸めてから差を取る。境界条件を安定させるため。 */
