@@ -218,3 +218,4 @@ table.grid tr.anomaly td { background: var(--blocking-weak); }
   border: 1px solid var(--accent); border-radius: var(--radius); color: var(--accent); background: var(--surface);
 }
 .ocr-table td:last-child { min-width: 240px; }
+.ocr-text { font-size: 12px; color: var(--muted); max-width: 320px; word-break: break-all; }

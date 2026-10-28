@@ -132,11 +132,11 @@ describe('検算②（商品別売上CSV）で総計1 の誤読を正す', () =>
 });
 
 describe('行から項目への割り当て', () => {
-  const row = (index: number, labelJpn: string, value: string, labelEng = ''): OcrRow => ({
+  const row = (index: number, text: string, value: string): OcrRow => ({
     index,
     rect: { left: 0, top: index * 10, width: 100, height: 10 },
-    labelJpn,
-    labelEng,
+    text,
+    label: text,
     candidates: [{ value, votes: 6 }],
   });
   const groups: LabelGroup[] = [
@@ -146,19 +146,19 @@ describe('行から項目への割り当て', () => {
     { id: 'ignored:mobile', labels: ['モバイル・C'] },
   ];
 
-  it('表記が崩れていても、サービス料の行から上段の位置を決め、内訳は括弧つきの行のかたまりから決める', () => {
+  it('表記で項目を決め、内訳は売掛の行に続く括弧つきの行から決める', () => {
     const rows = [
-      row(0, '半 ] ( 紀 抜 値', '1234567'), // 総計1（表記は崩れている）
-      row(1, '仁 制 員 合', '1000'), // 値割引合計
-      row(2, '/ 寺 |', '80'), // (値割引消費税)
-      row(3, '過半 税', '99999'), // 消費税
-      row(4, 'サー ビス 料', '0'),
-      row(5, '売 持', '20000'), // 売掛（崩れている）
-      row(6, '(8rU', '2000', '(menu'),
-      row(7, '(シェ アデ リ', '3000'),
-      row(8, '( 郡 人 カ ・C', '4000'), // モバイル・C（崩れている）
-      row(9, '(ロケ ッ ト ナ ウ', '11000'),
-      row(10, '合計', '99999999'),
+      row(0, '総計 1( 税 抜 値 割引 前 ) ¥1,234,567', '1234567'),
+      row(1, '値 割引 合計 ¥1,000', '1000'),
+      row(2, '( 値 割引 消費 税 ¥80)', '80'),
+      row(3, '消費 税 ¥99,999', '99999'),
+      row(4, 'サー ビス 料 ¥0', '0'),
+      row(5, '売 掛 12 回 ¥20,000', '20000'),
+      row(6, '(menu 3 回 ¥2,000)', '2000'),
+      row(7, '(シェ アデ リ 2 回 ¥3,000)', '3000'),
+      row(8, '( 郡 人 カ ・C 4 回 ¥4,000)', '4000'), // モバイル・C（崩れている）
+      row(9, '(ロケ ッ ト ナ ウ 5 回 ¥11,000)', '11000'),
+      row(10, '合計 ¥99,999,999', '99999999'),
     ];
     const f = mapFields(rows, { receivableGroups: groups });
     expect([f.grossTotal.value, f.discountTotal.value, f.discountTax.value, f.receivableTotal.value]).toEqual(['1234567', '1000', '80', '20000']);

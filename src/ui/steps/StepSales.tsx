@@ -318,7 +318,7 @@ function RealSalesForm({
         ) : null}
       </Panel>
 
-      <Panel title="読み取り結果の照合" hint="左の写真の行と見比べて、違っていれば右の欄を直します。検算で補正した値・読めなかった値は色が付いています。">
+      <Panel title="読み取り結果の照合" hint="写真の行・読み取った文字・値を並べています。違っていれば値の欄を直してください。検算で補正した値・読めなかった値は色が付いています。">
         {attention > 0 ? (
           <Note variant="warn">
             <strong>確認が必要な項目が {attention} 件あります。</strong>色付きの項目を、写真の行と見比べてください。
@@ -330,6 +330,7 @@ function RealSalesForm({
               <tr>
                 <th>項目</th>
                 <th>写真の該当行</th>
+                <th>読み取った文字</th>
                 <th className="right">値</th>
                 <th>状態</th>
               </tr>
@@ -341,6 +342,7 @@ function RealSalesForm({
                   <tr key={k} className={f && (f.source === 'corrected' || f.source === 'none') ? 'anomaly' : undefined}>
                     <td className="nowrap">{FIELD_LABELS[k]}</td>
                     <td>{f?.row && crops[f.row.index] ? <img className="ocr-crop" src={crops[f.row.index]} alt={`${FIELD_LABELS[k]}の行`} /> : <span className="muted">—</span>}</td>
+                    <td className="ocr-text">{f?.row ? f.row.text : <span className="muted">—</span>}</td>
                     <td className="num">
                       <input
                         type={k === 'businessYm' ? 'month' : 'text'}
@@ -360,7 +362,7 @@ function RealSalesForm({
                 );
               })}
               <tr>
-                <th colSpan={4} style={{ textAlign: 'left' }}>
+                <th colSpan={5} style={{ textAlign: 'left' }}>
                   売掛欄の内訳（代行チャネルは手数料の対象、それ以外は対象外）
                 </th>
               </tr>
@@ -380,6 +382,7 @@ function RealSalesForm({
                       />
                     </td>
                     <td>{r.row && crops[r.row.index] ? <img className="ocr-crop" src={crops[r.row.index]} alt={`${label}の行`} /> : null}</td>
+                    <td className="ocr-text">{r.row ? r.row.text : <span className="muted">—</span>}</td>
                     <td className="num">
                       <input
                         type="text"
@@ -405,6 +408,7 @@ function RealSalesForm({
                     <input type="text" list="receivable-labels" aria-label={`追加${i + 1}の表記`} value={l.label} onChange={(e) => setExtraLines((xs) => xs.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} style={{ width: 150 }} />
                   </td>
                   <td className="muted">手入力</td>
+                  <td className="muted">—</td>
                   <td className="num">
                     <input type="text" inputMode="numeric" aria-label={`追加${i + 1}の金額`} value={l.amount} onChange={(e) => setExtraLines((xs) => xs.map((x, j) => (j === i ? { ...x, amount: e.target.value.replace(/[,，¥￥\s]/g, '') } : x)))} style={{ width: 150, textAlign: 'right' }} />
                   </td>
@@ -433,6 +437,39 @@ function RealSalesForm({
             </button>
           ) : null}
         </div>
+        {ocr && ocr.rows.length > 0 ? (
+          <details className="photo-view">
+            <summary>読み取った行をすべて表示（{ocr.rows.length} 行）</summary>
+            <p className="muted small">
+              写真から読み取った行そのままです。上の表に出ていない行や、別の行が割り当てられていないかを確かめられます。
+              金額の候補は、読み方を変えて読んだときの票数です。
+            </p>
+            <div className="scroll">
+              <table className="grid ocr-table">
+                <thead>
+                  <tr>
+                    <th>写真の行</th>
+                    <th>読み取った文字</th>
+                    <th className="right">金額の候補</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ocr.rows.map((row) => (
+                    <tr key={row.index}>
+                      <td>{crops[row.index] ? <img className="ocr-crop" src={crops[row.index]} alt={`${row.index + 1} 行目`} /> : null}</td>
+                      <td className="ocr-text">{row.text}</td>
+                      <td className="num small">
+                        {row.candidates.length === 0
+                          ? '—'
+                          : row.candidates.slice(0, 3).map((c) => `${Number(c.value).toLocaleString('ja-JP')}（${c.votes}票）`).join(' / ')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
         {photo ? (
           <details className="photo-view">
             <summary>元の写真を表示</summary>

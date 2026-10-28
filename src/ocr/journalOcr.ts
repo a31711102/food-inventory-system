@@ -1,36 +1,52 @@
 /**
  * ジャーナル（店舗売上レポート）写真の読み取り（要件§11.3・§11.6）。
  *
- * 2026年8月の写真での技術検証に基づく方式:
- *  1. 影を消し、金額欄（右寄せ）の黒画素から行を切り出す
- *  2. 行ごとに、金額は数字専用の認識、ラベルは日本語・英字の認識にかける
- *     （日本語モデルは数字を誤読する）
- *  3. 前処理を変えた複数の画像で金額を読み、多数決をとる
- *  4. 検算で誤読を特定し、補正候補を出す
+ * 2段構えで読む。
+ *  1. **写真全体を文字として読む**（日本語＋英字）。行ごとの文字列と、その位置が得られる。
+ *     項目の割り当ては、この文字列と登録済みの表記との照合だけで決める。
+ *  2. 行ごとに**金額の欄だけを数字専用で読み直す**。前処理を変えた複数の画像で読み、多数決をとる
+ *     （日本語モデルは数字を誤読し、数字専用モデルは日本語を読めないため、役割を分ける）
+ *  3. 検算で誤読を特定し、補正候補を出す
  *     ① 売掛欄の内訳の合計 = 売掛合計
  *     ② 総計1 − 値割引合計 + 値割引消費税 = 商品別売上CSVの売上金額合計
  *
+ * **位置や並び順には頼らない**（2026-10-28 変更）。以前は金額欄の黒画素から行を切り出し、
+ * 「サービス料の4行上が総計1」のように位置で決めていたが、写真の撮り方やレシートの重なりが
+ * 変わると総計1すら取れなくなった。全文から表記で照合する方式に改めた。
+ *
  * 読み取り結果は「候補」であり、確定は必ず人が写真と見比べて行う（RS-04）。
- * 検算で補正した値・消去法で表記を決めた行には、その旨の注記を付けて返す。
+ * 読み取った行はすべて返す。画面では行の画像・読んだ文字列・金額を並べて照合できる。
  */
-import { crop, findRowBands, flatten, resize, type Band, type Gray, type Rect } from './gray';
+import { crop, flatten, resize, type Band, type Gray, type Rect } from './gray';
 import { normalizeLabel } from '../domain/realSales/masters';
 
-export interface OcrLine {
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface OcrPageWord {
   text: string;
-  bbox: { x0: number; y0: number; x1: number; y1: number };
+  bbox: Box;
+}
+
+/** 全文認識が返す1行 */
+export interface OcrPageLine {
+  text: string;
+  bbox: Box;
+  words: OcrPageWord[];
 }
 
 /** 認識エンジン（ブラウザは Tesseract.js の Web Worker、テストは Node の Tesseract.js） */
 export interface OcrBackend {
+  /** 写真全体を日本語＋英字として読み、行と語の位置を返す */
+  readPage(img: Gray): Promise<OcrPageLine[]>;
   /** 1行を数字として読む（0-9 , ¥ / のみ） */
   readDigits(img: Gray): Promise<string>;
-  /** 1行を日本語として読む */
-  readJpnLine(img: Gray): Promise<string>;
-  /** 1行を英字として読む（menu など） */
-  readEngLine(img: Gray): Promise<string>;
-  /** 複数行の領域を日本語として読み、行ごとの位置を返す */
-  readJpnBlock(img: Gray): Promise<OcrLine[]>;
+  /** 1行を日本語として読む。全文で読み落とした表記を読み直すのに使う */
+  readLine(img: Gray): Promise<string>;
 }
 
 export interface Candidate {
@@ -45,8 +61,10 @@ export interface OcrRow {
   index: number;
   /** 基準画像上の位置（照合表示で行の画像を切り出すのに使う） */
   rect: Rect;
-  labelJpn: string;
-  labelEng: string;
+  /** 全文認識が読んだ行そのまま。画面に出して写真と見比べてもらう */
+  text: string;
+  /** 金額より左の部分。表記の照合に使う */
+  label: string;
   candidates: Candidate[];
 }
 
@@ -76,6 +94,7 @@ export interface JournalOcrResult {
   discountTax: FieldReading;
   receivableTotal: FieldReading;
   receivables: ReceivableReading[];
+  /** 読み取った行すべて（照合用）。項目に割り当てられなかった行も含む */
   rows: OcrRow[];
   /** 照合表示用の基準画像（前処理済み） */
   base: Gray;
@@ -96,7 +115,9 @@ export interface OcrOptions {
 }
 
 /** 基準画像の横幅（画素）。写真の解像度によらずここにそろえる */
-const BASE_WIDTH = 2400;
+const BASE_WIDTH = 3200;
+/** 金額を数字として読み直すときの画像の横幅 */
+const DIGIT_WIDTH = 2400;
 /** 金額を読む前処理の組み合わせ（基準画像に対する倍率と、影を消す窓の半径） */
 const VARIANTS = [
   { scale: 1.0, radius: 0.022 },
@@ -189,95 +210,139 @@ export function closeDigits(read: string, truth: string): boolean {
 // 本体
 // ---------------------------------------------------------------------------
 
-/** 感熱紙の文字がある横の範囲（左端・右端）。写真の撮り方で変わるので毎回求める */
-function textSpan(g: Gray, bands: Band[]): { left: number; right: number } {
-  const cols = new Uint32Array(g.width);
-  for (const b of bands) {
-    for (let y = b.y0; y < b.y1; y++) {
-      const row = y * g.width;
-      for (let x = 0; x < g.width; x++) if (g.data[row + x]! < 150) cols[x]!++;
+/**
+ * 行の中の文字のかたまり（列方向に間が空いていないまとまり）を左から並べて返す。
+ * ジャーナルの行は「表記 … 回数 … 金額」と間を空けて並ぶので、最後のかたまりが金額になる。
+ */
+function clusters(g: Gray, b: Band, fromX: number, toX: number, gapLimit: number): { left: number; right: number }[] {
+  const x0 = Math.max(0, Math.round(fromX));
+  const x1 = Math.min(g.width, Math.round(toX));
+  const out: { left: number; right: number }[] = [];
+  let start = -1, blank = 0;
+  for (let x = x0; x < x1; x++) {
+    let dark = false;
+    for (let y = b.y0; y < b.y1 && !dark; y++) if (g.data[y * g.width + x]! < 150) dark = true;
+    if (dark) {
+      if (start < 0) start = x;
+      blank = 0;
+    } else if (start >= 0 && ++blank > gapLimit) {
+      out.push({ left: start, right: x - blank });
+      start = -1;
+      blank = 0;
     }
   }
-  let max = 0;
-  for (const c of cols) if (c > max) max = c;
-  const th = max * 0.08;
-  let left = 0, right = g.width - 1;
-  while (left < g.width && cols[left]! < th) left++;
-  while (right > 0 && cols[right]! < th) right--;
-  return { left, right };
+  if (start >= 0) out.push({ left: start, right: x1 - 1 });
+  return out;
 }
 
 /**
- * 行の中で、右端にある文字のかたまり（＝金額）の横の範囲を求める。
- * 2枚のレシートが重なって写ると上下で左右の位置がずれるため、行ごとに求める。
- * 回数の欄（「12回」など）とは間が空いているので、右端のかたまりだけを取れば金額になる。
+ * 金額の縦の範囲を画素で詰める。全文認識が返す行の枠は上下に余白が付いたり欠けたりするので、
+ * 金額の欄の黒画素だけを見て、文字がきっちり入る高さにする（数字専用の認識はこれで精度が上がる）。
  */
-function amountExtent(g: Gray, b: Band, fromX: number): { left: number; right: number } | null {
-  const x0 = Math.round(fromX);
-  const cols: boolean[] = [];
-  for (let x = x0; x < g.width; x++) {
+function tighten(g: Gray, b: Band, left: number, right: number, centerY: number): Band {
+  const x0 = Math.max(0, Math.round(left)), x1 = Math.min(g.width, Math.round(right) + 1);
+  const counts: number[] = [];
+  for (let y = b.y0; y < b.y1; y++) {
     let c = 0;
-    for (let y = b.y0; y < b.y1; y++) if (g.data[y * g.width + x]! < 150) c++;
-    cols.push(c > 0);
+    for (let x = x0; x < x1; x++) if (g.data[y * g.width + x]! < 150) c++;
+    counts.push(c);
   }
-  const gap = Math.round(g.width * 0.025);
-  let right = -1;
-  for (let i = cols.length - 1; i >= 0; i--) if (cols[i]) { right = i; break; }
-  if (right < 0) return null;
-  let left = right, blank = 0;
-  for (let i = right; i >= 0; i--) {
-    if (cols[i]) { left = i; blank = 0; } else if (++blank > gap) break;
-  }
-  return { left: x0 + left, right: x0 + right };
+  // 重なったレシートの行が枠に入り込むことがあるので、いちばん濃い行ではなく
+  // 全文認識が返した行の中心から上下に広げる
+  const c0 = Math.min(counts.length - 1, Math.max(0, Math.round(centerY - b.y0)));
+  if (counts.length === 0 || counts[c0] === undefined || counts[c0]! === 0) return b;
+  let y0 = c0, y1 = c0;
+  while (y0 > 0 && counts[y0 - 1]! > 0) y0--;
+  while (y1 + 1 < counts.length && counts[y1 + 1]! > 0) y1++;
+  const pad = Math.max(4, Math.round((y1 - y0) * 0.3));
+  return { y0: Math.max(0, b.y0 + y0 - pad), y1: Math.min(g.height, b.y0 + y1 + 1 + pad) };
 }
 
 export async function readJournal(photo: Gray, backend: OcrBackend, opts: OcrOptions): Promise<JournalOcrResult> {
   const base = flatten(resize(photo, BASE_WIDTH / photo.width), Math.round(BASE_WIDTH * VARIANTS[0].radius));
   const W = base.width, H = base.height;
 
-  // 行の検出は2段階。まず画像の中ほどで粗く探して文字の横の範囲を求め、
-  // そのうえで右側の金額欄で探し直す。
-  const span = textSpan(base, findRowBands(base, W * 0.5, W * 0.8));
-  const spanW = span.right - span.left;
-  const amountFrom = span.left + spanW * 0.62;
-  const bands = findRowBands(base, amountFrom, span.right).filter((b) => b.y1 - b.y0 < H * 0.05);
+  const pageLines = (await backend.readPage(base)).filter((l) => {
+    const h = l.bbox.y1 - l.bbox.y0;
+    return l.text.trim() !== '' && h > 6 && h < H * 0.08;
+  });
+  const lines = [...pageLines].sort((a, b) => a.bbox.y0 - b.bbox.y0);
 
-  const variants = VARIANTS.map((v, i) => ({
-    img: i === 0 ? base : flatten(resize(photo, (BASE_WIDTH * v.scale) / photo.width), Math.round(BASE_WIDTH * v.scale * v.radius)),
-    k: v.scale,
+  // 文字がある横の範囲。金額はこの範囲の右寄りにあるので、どの行も同じ位置から右を探す。
+  // 行ごとの枠から決めると、枠が金額の途中から始まる行で先頭の桁を切り落としてしまう。
+  const spanLeft = Math.min(...lines.map((l) => l.bbox.x0), W);
+  const spanRight = Math.max(...lines.map((l) => l.bbox.x1), 0);
+  const amountFrom = spanLeft + (spanRight - spanLeft) * 0.5;
+
+  // 金額を読む画像は基準画像より小さくする。文字を大きく写しすぎると数字の認識が落ちる
+  // （全文の方は表記を読むため大きめが要る）。k は基準画像の座標をこの画像の座標へ直す倍率。
+  const variants = VARIANTS.map((v) => ({
+    img: flatten(resize(photo, (DIGIT_WIDTH * v.scale) / photo.width), Math.round(DIGIT_WIDTH * v.scale * v.radius)),
+    k: (DIGIT_WIDTH * v.scale) / BASE_WIDTH,
   }));
 
-  const total = bands.length * (VARIANTS.length * UPSCALES.length + 2) + 1;
-  let done = 0;
+  const total = lines.length * VARIANTS.length * UPSCALES.length + 2;
+  let done = 1;
+  opts.onProgress?.(done, total, '全文');
   const tick = (phase: string): void => opts.onProgress?.(++done, total, phase);
 
   const rows: OcrRow[] = [];
-  for (const [index, b] of bands.entries()) {
-    const pad = Math.round((b.y1 - b.y0) * 0.3);
-    const rect: Rect = { left: span.left, top: b.y0 - pad, width: spanW, height: b.y1 - b.y0 + pad * 2 };
-    const labelImg = crop(base, { ...rect, width: spanW * 0.5 });
-    const labelJpn = (await backend.readJpnLine(labelImg)).trim();
-    tick('表記');
-    const labelEng = (await backend.readEngLine(labelImg)).trim();
-    tick('表記');
+  /** 行ごとの、表記がある左側の範囲（読み直すときに使う） */
+  const labelRegions: { left: number; width: number }[] = [];
+  for (const [index, l] of lines.entries()) {
+    const h = l.bbox.y1 - l.bbox.y0;
+    const pad = Math.round(h * 0.45);
+    const band: Band = { y0: Math.max(0, Math.round(l.bbox.y0 - pad)), y1: Math.min(H, Math.round(l.bbox.y1 + pad)) };
+    const rect: Rect = { left: Math.max(0, l.bbox.x0 - pad), top: band.y0, width: Math.min(W, l.bbox.x1 + pad) - Math.max(0, l.bbox.x0 - pad), height: band.y1 - band.y0 };
 
-    const ext = amountExtent(base, b, span.left + spanW * 0.5);
-    const margin = (b.y1 - b.y0) * 0.6;
-    const ax0 = ext ? ext.left - margin : amountFrom - spanW * 0.04;
-    const ax1 = ext ? ext.right + margin : span.right + spanW * 0.06;
-    const reads: (string | null)[] = [];
+    // 金額の欄: 語の位置で当たりを付け、画素で左右の端を詰める
+    // 金額の欄: 行の中ほどから右を見て、右端の文字のかたまりを金額とする。
+    // 語の位置（全文認識）は数字の途中で切れることがあるので、左端の当たりには使わない。
+    const margin = h * 0.6;
+    const cs = clusters(base, band, l.bbox.x0 - margin, Math.max(l.bbox.x1 + margin, amountFrom + margin), Math.max(W * 0.015, h * 0.7));
+    const last = cs[cs.length - 1];
+    const ax0 = last ? last.left - margin : amountFrom;
+    const ax1 = last ? last.right + margin : l.bbox.x1 + margin;
+    const tight = last ? tighten(base, band, ax0, ax1, (l.bbox.y0 + l.bbox.y1) / 2) : band;
+
+    // 全文認識が読んだ金額も票に入れる（2票）。数字専用とは別のモデルなので、
+    // 片方が誤読しても、もう片方の読みが候補に残り、検算で正せるようになる。
+    const pageAmount = normalizeAmount(l.text.replace(/\s+/g, ' ').replace(/([\d,])\s+(?=[\d,])/g, '$1'));
+    const reads: (string | null)[] = [pageAmount, pageAmount];
     for (const v of variants) {
-      const a = crop(v.img, { left: ax0 * v.k, top: rect.top * v.k, width: (ax1 - ax0) * v.k, height: rect.height * v.k });
+      const a = crop(v.img, { left: ax0 * v.k, top: tight.y0 * v.k, width: (ax1 - ax0) * v.k, height: (tight.y1 - tight.y0) * v.k });
       for (const up of UPSCALES) {
         reads.push(normalizeAmount(await backend.readDigits(resize(a, up))));
         tick('金額');
       }
     }
-    rows.push({ index, rect, labelJpn, labelEng, candidates: vote(reads) });
+
+    // 表記は金額より左の語だけから作る（金額や回数の数字を表記に混ぜない）
+    const label = l.words
+      .filter((w) => w.text.trim() !== '' && w.bbox.x1 <= ax0 + margin)
+      .map((w) => w.text)
+      .join('')
+      .trim() || l.text.replace(/\s/g, '');
+
+    rows.push({ index, rect, text: l.text.replace(/\s+/g, ' ').trim(), label, candidates: vote(reads) });
+    // 表記は行の枠ではなく、レシートの左端から金額の手前までを見る
+    // （表記が薄くて全文に出なかった行は、枠が金額から始まってしまう）
+    labelRegions.push({ left: spanLeft, width: Math.max(10, ax0 - margin - spanLeft) });
+  }
+
+  // 全文認識は薄い表記を落とすことがある（金額だけの行になる）。
+  // 売掛欄の内訳らしい行のうち表記が照合できなかったものだけ、左側をもう一度読む。
+  for (const [i, r] of rows.entries()) {
+    if (!paren(r)) continue;
+    if (bestOf([r.label, r.text], opts.receivableGroups).score >= MATCH) continue;
+    const reg = labelRegions[i]!;
+    const img = crop(base, { left: reg.left, top: r.rect.top, width: reg.width, height: r.rect.height });
+    const t = (await backend.readLine(resize(img, 1.5))).trim();
+    if (t) r.label = `${r.label} ${t}`.trim();
   }
 
   const fields = mapFields(rows, opts);
-  const header = await readHeader(base, backend, fields.grossTotal.row?.rect.top ?? H * 0.3, span);
+  const header = await readHeader(base, backend, rows);
   tick('営業月');
 
   return { ...fields, businessYm: header.businessYm, storeName: header.storeName, rows, base };
@@ -290,7 +355,6 @@ export async function readJournal(photo: Gray, backend: OcrBackend, opts: OcrOpt
 const GROSS = [{ id: 'gross', labels: ['総計1(税抜値割引前)', '総計1', '税抜値割引前'] }];
 const DISCOUNT = [{ id: 'disc', labels: ['値割引合計', '割引合計'] }];
 const DISCOUNT_TAX = [{ id: 'tax', labels: ['(値割引消費税)', '値割引消費税', '割引消費税'] }];
-const SERVICE = [{ id: 'service', labels: ['サービス料'] }];
 const RECEIVABLE = [{ id: 'recv', labels: ['売掛'] }];
 
 const reading = (row: OcrRow | null): FieldReading => ({
@@ -300,51 +364,80 @@ const reading = (row: OcrRow | null): FieldReading => ({
   source: row?.candidates[0] ? 'ocr' : 'none',
 });
 
+/** 括弧でくくられた行（売掛欄の内訳はこの形。前後どちらかの括弧が読めれば拾う） */
+function paren(r: OcrRow): boolean {
+  const t = r.text.replace(/\s/g, '');
+  return /^[「。|]*[(（]/.test(t) || /[)）]$/.test(t);
+}
+
 export function mapFields(rows: OcrRow[], opts: OcrOptions): Pick<JournalOcrResult, 'grossTotal' | 'discountTotal' | 'discountTax' | 'receivableTotal' | 'receivables'> {
-  const score = (r: OcrRow, g: LabelGroup[]): number => bestOf([r.labelJpn, r.labelEng], g).score;
+  const score = (r: OcrRow, g: LabelGroup[]): number => bestOf([r.label, r.text], g).score;
+  // 同じ行を2つの項目に割り当てない。表記が崩れると「総計1(税抜値割引前)」の行が
+  // 「値割引合計」にも 0.6 で一致してしまい、値割引が総計1の金額になることがあった。
+  const taken = new Set<number>();
   const argBest = (g: LabelGroup[], from = 0, to = rows.length): number => {
     let best = -1, s = MATCH;
     for (let i = Math.max(0, from); i < Math.min(rows.length, to); i++) {
+      if (taken.has(i)) continue;
       const v = score(rows[i]!, g);
       if (v >= s) { s = v; best = i; }
     }
+    if (best >= 0) taken.add(best);
     return best;
   };
   const at = (i: number): OcrRow | null => (i >= 0 && i < rows.length ? rows[i]! : null);
-  const paren = (r: OcrRow): boolean => /^[\s|「。]*[(（]/.test(r.labelJpn) || /^[\s|]*[(（]/.test(r.labelEng);
 
   // --- 売掛欄の内訳 ---
-  // 括弧つきの行が続くかたまりのうち、表記が売掛欄の候補にいちばん多く一致したもの。
-  // 「売掛」の文字そのものは崩れやすい（「売 持」と読まれた）ので、内訳の側から範囲を決める。
+  // 「売掛」の行を見つけ、そのすぐ下に続く括弧つき（または表記が一致する）行を内訳とする。
+  // 売掛の文字が読めなかったときは、表記が一致する行がいちばん多いかたまりを使う。
   const hit = rows.map((r) => score(r, opts.receivableGroups) >= MATCH);
-  let first = -1, last = -1, bestHits = 0;
-  for (let a = 0; a < rows.length; ) {
-    if (!(hit[a] || paren(rows[a]!))) { a++; continue; }
-    let b = a;
+  const iRecv = argBest(RECEIVABLE);
+  if (iRecv >= 0) for (let i = iRecv; i < rows.length; i++) taken.add(i);
+  let first = -1, last = -1;
+  if (iRecv >= 0) {
+    let b = iRecv;
     while (b + 1 < rows.length && (hit[b + 1] || paren(rows[b + 1]!))) b++;
-    const n = hit.slice(a, b + 1).filter(Boolean).length;
-    if (n > bestHits) { bestHits = n; first = a; last = b; }
-    a = b + 1;
+    if (b > iRecv) { first = iRecv + 1; last = b; }
   }
-  const iRecv = first > 0 ? first - 1 : argBest(RECEIVABLE);
+  if (first < 0) {
+    let bestHits = 0;
+    for (let a = 0; a < rows.length; ) {
+      if (!(hit[a] || paren(rows[a]!))) { a++; continue; }
+      let b = a;
+      while (b + 1 < rows.length && (hit[b + 1] || paren(rows[b + 1]!))) b++;
+      const n = hit.slice(a, b + 1).filter(Boolean).length;
+      if (n > bestHits) { bestHits = n; first = a; last = b; }
+      a = b + 1;
+    }
+  }
 
   // --- 上段 ---
-  // 並びは 総計1 → 値割引合計 → (値割引消費税) → 消費税 → サービス料。
-  // 総計1 などの表記は崩れやすいが「サービス料」はきれいに読めるので、そこから位置で決める。
-  const limit = iRecv >= 0 ? iRecv : rows.length;
+  // 総計1・値割引合計・（値割引消費税）は表記の照合だけで決める（位置には頼らない）。
+  // 総計1 がどうしても読めないときだけ、売掛より上で桁数がいちばん多い行を候補にする。
+  const limit = first > 0 ? first : rows.length;
   let iGross = argBest(GROSS, 0, limit);
   if (iGross < 0) {
-    const iService = argBest(SERVICE, 0, limit);
-    if (iService >= 4) iGross = iService - 4;
+    let bestLen = 5;
+    for (let i = 0; i < limit; i++) {
+      const len = rows[i]!.candidates[0]?.value.length ?? 0;
+      if (len > bestLen) { bestLen = len; iGross = i; }
+    }
   }
-  if (iGross < 0) iGross = rows.findIndex((r, i) => i < limit && (r.candidates[0]?.value.length ?? 0) >= 6);
-  const after = (g: LabelGroup[], from: number): number => {
-    if (from < 0) return -1;
-    const b = argBest(g, from, Math.min(limit, from + 2));
-    return b >= 0 ? b : from;
+  // 値割引の2行は表記が崩れやすい（「EIE [AE」などと読まれる）。
+  // 照合できなければ、総計1 のすぐ下2行までを順に当てる。総計1 より小さい額であることを条件にする。
+  const smaller = (i: number): boolean => {
+    const a = rows[i]?.candidates[0]?.value, g = at(iGross)?.candidates[0]?.value;
+    return !!a && (!g || a.length < g.length);
   };
-  const iDisc = iGross >= 0 ? after(DISCOUNT, iGross + 1) : -1;
-  const iDiscTax = iDisc >= 0 ? after(DISCOUNT_TAX, iDisc + 1) : -1;
+  const near = (groups: LabelGroup[], from: number): number => {
+    const b = argBest(groups, 0, limit);
+    if (b >= 0) return b;
+    if (from < 0 || from >= limit || taken.has(from) || !smaller(from)) return -1;
+    taken.add(from);
+    return from;
+  };
+  const iDisc = near(DISCOUNT, iGross + 1);
+  const iDiscTax = near(DISCOUNT_TAX, iDisc >= 0 ? iDisc + 1 : -1);
 
   const receivables = first >= 0 ? labelReceivables(rows.slice(first, last + 1), opts.receivableGroups) : [];
   const out = {
@@ -365,11 +458,11 @@ export function mapFields(rows: OcrRow[], opts: OcrOptions): Pick<JournalOcrResu
  */
 function labelReceivables(rows: OcrRow[], groups: LabelGroup[]): ReceivableReading[] {
   const out: ReceivableReading[] = rows.map((r) => {
-    const m = bestOf([r.labelJpn, r.labelEng], groups);
+    const m = bestOf([r.label, r.text], groups);
     const ok = m.score >= MATCH;
     return {
       ...reading(r),
-      label: ok ? m.label : (r.labelJpn.replace(/^[(（|「。\s]+/, '').replace(/\s/g, '') || r.labelEng),
+      label: ok ? m.label : (r.label.replace(/^[(（|「。\s]+/, '').replace(/\s/g, '') || r.text),
       labelBy: ok ? 'exact' : 'none',
       _id: ok ? m.id : '',
     } as ReceivableReading & { _id: string };
@@ -381,7 +474,7 @@ function labelReceivables(rows: OcrRow[], groups: LabelGroup[]): ReceivableReadi
     const o = open[0]!;
     const r = o.row!;
     const ranked = missing
-      .map((g) => ({ g, s: Math.max(...g.labels.map((l) => Math.max(labelScore(r.labelJpn, l), labelScore(r.labelEng, l)))) }))
+      .map((g) => ({ g, s: Math.max(...g.labels.map((l) => Math.max(labelScore(r.label, l), labelScore(r.text, l)))) }))
       .sort((a, b) => b.s - a.s);
     if (ranked[0]!.s >= 0.3 && (ranked.length === 1 || ranked[0]!.s > ranked[1]!.s)) {
       o.label = ranked[0]!.g.labels[0]!;
@@ -451,8 +544,11 @@ export function solveReceivables(items: FieldReading[], total: FieldReading): vo
   total.candidates.slice(0, 3).forEach((tc, totalRank) => {
     items.forEach((f, k) => {
       const v = BigInt(tc.value) - (sumTops - BigInt(tops[k]!));
-      if (v > 0n && closeDigits(tops[k]!, v.toString())) {
-        fixes.push({ k, v: v.toString(), total: tc.value, share: share(f), changed: changedDigits(tops[k]!, v.toString()), totalRank });
+      const changed = v > 0n ? changedDigits(tops[k]!, v.toString()) : 99;
+      // 売掛合計そのものも多数決の1位でないときは、項目の方も1桁違いまでしか認めない。
+      // どちらの読みも弱い状態で2桁直すと、もっともらしい別の値に確定してしまう。
+      if (v > 0n && closeDigits(tops[k]!, v.toString()) && !(changed >= 2 && totalRank > 0)) {
+        fixes.push({ k, v: v.toString(), total: tc.value, share: share(f), changed, totalRank });
       }
     });
   });
@@ -516,6 +612,7 @@ export function solveGross(gross: FieldReading, disc: FieldReading, tax: FieldRe
   apply(tax, h.t, '値割引消費税');
 }
 
+
 // ---------------------------------------------------------------------------
 // 見出し（営業月・店舗名）
 // ---------------------------------------------------------------------------
@@ -523,30 +620,26 @@ export function solveGross(gross: FieldReading, disc: FieldReading, tax: FieldRe
 async function readHeader(
   base: Gray,
   backend: OcrBackend,
-  bottom: number,
-  span: { left: number; right: number },
+  rows: OcrRow[],
 ): Promise<{ businessYm: FieldReading; storeName: string | null }> {
-  const region: Rect = { left: span.left, top: 0, width: span.right - span.left, height: Math.max(10, bottom) };
-  const lines = await backend.readJpnBlock(crop(base, region));
-
   let storeName: string | null = null;
   const yms: string[] = [];
   const push = (y: string, m: string): void => {
     if (Number(m) >= 1 && Number(m) <= 12) yms.push(`${y}-${m.padStart(2, '0')}`);
   };
-  for (const l of lines) {
-    const t = l.text.replace(/\s/g, '');
+  for (const r of rows) {
+    const t = r.text.replace(/\s/g, '');
     if (!storeName && /店舗/.test(t)) {
       const s = t.split(/[:：]/).slice(1).join('').trim();
       if (s) storeName = s;
     }
-    if (/営業|業月/.test(t)) {
+    // 「印刷日時」も年月を含むので、営業月の行だけを見る
+    if (/営業|業月/.test(t) && !/印刷/.test(t)) {
       const m = /(20\d{2})[/／年7]?(\d{1,2})(?!\d)/.exec(t.split(/[:：]/).slice(1).join('') || t);
       if (m) push(m[1]!, m[2]!);
-      // 同じ行を数字だけで読み直す（日本語モデルは / を 7 と読むことがある）。2票として数える
-      const lineImg = crop(base, { left: region.left + l.bbox.x0, top: region.top + l.bbox.y0 - 6, width: l.bbox.x1 - l.bbox.x0, height: l.bbox.y1 - l.bbox.y0 + 12 });
-      const d = (await backend.readDigits(resize(lineImg, 2))).replace(/\s/g, '');
-      const m2 = /(20\d{2})\/(\d{1,2})(?!\d)/.exec(d);
+      // 同じ行を数字だけで読み直す（日本語モデルは / を 7 と読み、2026 を Z0Z5 と読む）。2票として数える
+      const d = (await backend.readDigits(resize(crop(base, r.rect), 2))).replace(/\s/g, '');
+      const m2 = /(20\d{2})[/]?(\d{1,2})(?!\d)/.exec(d);
       if (m2) { push(m2[1]!, m2[2]!); push(m2[1]!, m2[2]!); }
     }
   }
