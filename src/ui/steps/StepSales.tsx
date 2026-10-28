@@ -14,6 +14,7 @@ import { Panel, Note, IssueList, FileSlot } from '../components';
 import type { Role } from '../App';
 import type { ConfirmedRealSales, UploadedFile } from '../../app/pipeline';
 import { computeRealSales, type JournalEntry, type PreviousRealSales, type ReceivableLine } from '../../domain/realSales/compute';
+import { readJournalFile } from '../../domain/realSales/journalFile';
 import { toDecimalString, type Fixed } from '../../domain/realSales/fixed';
 import { channelRow, EPOCH_YM, KNOWN_CHANNELS, resolveMasters, type RealSalesMasters } from '../../domain/realSales/masters';
 import { importMastersFromWorkbook } from '../../domain/realSales/masterImport';
@@ -38,12 +39,48 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   receivableTotal: '売掛（合計）',
 };
 
-const SOURCE_TEXT: Record<FieldReading['source'], { text: string; cls: string }> = {
+const SOURCE_TEXT: Record<FieldReading['source'] | 'file', { text: string; cls: string }> = {
   checked: { text: '検算で確認', cls: 'tag-reg' },
   corrected: { text: '検算で補正・要確認', cls: 'tag-unreg' },
   ocr: { text: '読取', cls: 'tag-plain' },
   none: { text: '読めず・要入力', cls: 'tag-unreg' },
+  file: { text: '取込ファイル', cls: 'tag-reg' },
 };
+
+/** 読み取り結果ファイルの書き方（画面に出す見本）。金額は架空 */
+const JOURNAL_FILE_SAMPLE = `【CSV の場合】1列目に項目、2列目に金額
+項目,金額
+営業月,2026-09
+店舗名,○○店
+総計1（税抜値割引前）,1234567
+値割引合計,1000
+値割引消費税,80
+売掛合計,245694
+menu,2345
+シェアデリ,30003
+UE配達代行,123457
+ナカペイ,11111
+
+【JSON の場合】
+{
+  "営業月": "2026-09",
+  "総計1": 1234567,
+  "値割引合計": 1000,
+  "値割引消費税": 80,
+  "売掛合計": 245694,
+  "売掛内訳": [
+    { "項目": "menu", "金額": 2345 },
+    { "項目": "シェアデリ", "金額": 30003 }
+  ]
+}
+
+※ 売掛欄の内訳は、ジャーナルに出ている行をそのまま並べてください（手数料の対象かどうかはシステムが判断します）。
+※ 金額は税込・税抜を変えず、ジャーナルの数字をそのまま書いてください。`;
+
+/** 前工程で作った読み取り結果ファイルの値を、写真を読んだときと同じ形にする */
+function fileReading(value: string | null): FieldReading {
+  return { value, candidates: value === null ? [] : [{ value, votes: 1 }], row: null, source: value === null ? 'none' : ('file' as FieldReading['source']) };
+}
 
 export function StepSales({
   targetYm,
@@ -124,6 +161,8 @@ function RealSalesForm({
 }): JSX.Element {
   const [photo, setPhoto] = useState<(UploadedFile & { url: string }) | null>(null);
   const [csv, setCsv] = useState<UploadedFile | null>(null);
+  /** 前工程（店舗オーナー）が写真を読み取って作ったファイル。写真の代わりに使える */
+  const [journalFile, setJournalFile] = useState<UploadedFile | null>(null);
   const [ocr, setOcr] = useState<JournalOcrResult | null>(null);
   const [ocrState, setOcrState] = useState<{ phase: 'idle' | 'running' | 'done' | 'error'; done?: number; total?: number; message?: string }>({ phase: 'idle' });
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -147,16 +186,28 @@ function RealSalesForm({
     [csvFile, resolved.extractRule],
   );
 
-  // OCR の行から項目への割り当ては、CSV が後から来ても検算②をやり直せるよう、ここで行う
-  const fields = useMemo(
-    () => (ocr ? { ...mapFields(ocr.rows, { receivableGroups: groups, csvAmountTotal: csvFile?.amountTotal ?? null }), businessYm: ocr.businessYm } : null),
-    [ocr, groups, csvFile?.amountTotal],
-  );
+  const parsedFile = useMemo(() => (journalFile ? readJournalFile(journalFile.bytes, journalFile.fileName) : null), [journalFile]);
+
+  // 項目の値は、読み取り結果ファイルがあればそれを使い、無ければ写真の読み取りから作る。
+  // OCR の行から項目への割り当ては、CSV が後から来ても検算②をやり直せるよう、ここで行う。
+  const fields = useMemo(() => {
+    if (parsedFile && parsedFile.issues.length === 0) {
+      return {
+        businessYm: fileReading(parsedFile.businessYm),
+        grossTotal: fileReading(parsedFile.grossTotal),
+        discountTotal: fileReading(parsedFile.discountTotal),
+        discountTax: fileReading(parsedFile.discountTax),
+        receivableTotal: fileReading(parsedFile.receivableTotal),
+        receivables: parsedFile.receivables.map((l) => ({ ...fileReading(l.amount), label: l.label, labelBy: 'exact' as const })),
+      };
+    }
+    return ocr ? { ...mapFields(ocr.rows, { receivableGroups: groups, csvAmountTotal: csvFile?.amountTotal ?? null }), businessYm: ocr.businessYm } : null;
+  }, [parsedFile, ocr, groups, csvFile?.amountTotal]);
 
   const valueOf = (key: string, f: FieldReading | undefined): string => edits[key] ?? f?.value ?? '';
   const journal: JournalEntry = {
     businessYm: valueOf('businessYm', fields?.businessYm) || null,
-    storeName: ocr?.storeName ?? null,
+    storeName: parsedFile?.storeName ?? ocr?.storeName ?? null,
     grossTotal: valueOf('grossTotal', fields?.grossTotal) || null,
     discountTotal: valueOf('discountTotal', fields?.discountTotal) || null,
     discountTax: valueOf('discountTax', fields?.discountTax) || null,
@@ -188,7 +239,7 @@ function RealSalesForm({
   const b = result.breakdown;
 
   // 入力が変わったら確定を取り消す（再確認・再確定を求める。要件§11.6-8）
-  const signature = JSON.stringify({ journal, manualQty, csv: csv?.fileName, csvLen: csv?.bytes.length, photo: photo?.fileName, masters, targetYm });
+  const signature = JSON.stringify({ journal, manualQty, csv: csv?.fileName, csvLen: csv?.bytes.length, photo: photo?.fileName, jfile: journalFile?.fileName, jfileLen: journalFile?.bytes.length, masters, targetYm });
   const confirmedSig = useRef<string | null>(null);
   useEffect(() => {
     if (confirmed && confirmedSig.current !== null && confirmedSig.current !== signature) {
@@ -245,6 +296,7 @@ function RealSalesForm({
     const files: RealSalesDetail['files'] = [];
     if (photo) files.push({ kind: 'photo', fileName: photo.fileName, sha256: await sha256Hex(photo.bytes) });
     if (csv) files.push({ kind: 'csv', fileName: csv.fileName, sha256: await sha256Hex(csv.bytes) });
+    if (journalFile) files.push({ kind: 'journalFile', fileName: journalFile.fileName, sha256: await sha256Hex(journalFile.bytes) });
     await onConfirm({
       realSales: toDecimalString(b.realSales),
       grossTotal: toDecimalString(b.grossTotal),
@@ -275,9 +327,31 @@ function RealSalesForm({
     <>
       <MasterPanel targetYm={targetYm} role={role} masters={masters} onSetMasters={onSetMasters} resolvedIssues={resolved.issues} />
 
-      <Panel title="写真と商品別売上CSV" hint="ジャーナル（店舗売上レポート）の写真と、POS の商品別売上CSVを指定します。写真はこのPCの中だけで読み取り、外部へは送りません。">
+      <Panel title="ジャーナルと商品別売上CSV" hint="ジャーナル（店舗売上レポート）の値と、POS の商品別売上CSVを指定します。写真を使う場合も、このPCの中だけで読み取り、外部へは送りません。">
         <FileSlot
-          title="ジャーナル写真"
+          title="ジャーナルの読み取り結果ファイル（推奨）"
+          description="前工程で写真を読み取って作ったファイル（CSV・JSON）。指定すると、その値をそのまま使います。書き方は下の「作り方」を開いてください。"
+          accept=".csv,.tsv,.txt,.json"
+          file={journalFile}
+          onSelect={(f) => void f.arrayBuffer().then((buf) => setJournalFile({ fileName: f.name, bytes: new Uint8Array(buf) }))}
+          onClear={() => setJournalFile(null)}
+        />
+        {parsedFile && parsedFile.issues.length > 0 ? <IssueList issues={parsedFile.issues} levels={['BLOCKING']} /> : null}
+        {parsedFile && parsedFile.issues.length === 0 ? (
+          <Note>
+            読み取り結果ファイルの値を使います（売掛欄の内訳 {parsedFile.receivables.length} 件）。写真の読み取りは行いません。
+          </Note>
+        ) : null}
+        <details className="photo-view">
+          <summary>読み取り結果ファイルの作り方（店舗オーナー向け）</summary>
+          <p className="muted small">
+            ジャーナルの写真を AI に読ませて、次のどちらかの形で保存してください。項目名はジャーナルの表記のままで構いません。
+          </p>
+          <pre className="sample">{JOURNAL_FILE_SAMPLE}</pre>
+        </details>
+
+        <FileSlot
+          title="ジャーナル写真（読み取り結果ファイルが無いとき）"
           description="売掛欄（menu・シェアデリなど）が写っている写真。影・重なりがあっても読めますが、真上から明るく撮ると確実です。"
           accept="image/*"
           file={photo}

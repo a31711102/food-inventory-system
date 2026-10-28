@@ -82,6 +82,7 @@ export const ISSUE_CATALOG = {
   E019: { level: 'BLOCKING', title: '料率・容器単価が未設定' },
   E020: { level: 'BLOCKING', title: 'ジャーナルの必須値が無い' },
   E021: { level: 'BLOCKING', title: '代行チャネルの重複' },
+  E022: { level: 'BLOCKING', title: 'ジャーナルの読み取り結果ファイルを読めない' },
   W026: { level: 'WARNING', title: '未登録の売掛項目' },
   W027: { level: 'WARNING', title: '代行チャネルが写真に無い' },
   W028: { level: 'WARNING', title: 'ジャーナルの検算不一致' },

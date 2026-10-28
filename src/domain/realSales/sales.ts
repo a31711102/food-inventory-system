@@ -13,7 +13,7 @@ export interface RealSalesDetail {
   /** OCR の読取値と確定値。どの項目をどう直したかを残す */
   readings: { field: string; ocrValue: string | null; finalValue: string | null; source: string; edited: boolean }[];
   /** 入力ファイルの指紋。写真そのものは保存しない */
-  files: { kind: 'photo' | 'csv'; fileName: string; sha256: string }[];
+  files: { kind: 'photo' | 'csv' | 'journalFile'; fileName: string; sha256: string }[];
   /** 確定時に適用したマスタ */
   masters: RealSalesMasters;
 }
