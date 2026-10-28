@@ -11,22 +11,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "testdata": "node scripts/make-testdata.mjs",
-    "ocr-assets": "node scripts/copy-ocr-assets.mjs",
-    "predev": "node scripts/copy-ocr-assets.mjs",
-    "prebuild": "node scripts/copy-ocr-assets.mjs"
+    "testdata": "node scripts/make-testdata.mjs"
   },
   "dependencies": {
     "fast-xml-parser": "^5.11.1",
     "jszip": "^3.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "sql.js": "^1.11.0",
-    "tesseract.js": "^5.1.1"
+    "sql.js": "^1.11.0"
   },
   "devDependencies": {
-    "@tesseract.js-data/eng": "^1.0.0",
-    "@tesseract.js-data/jpn": "^1.0.0",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
     "@types/react": "^18.3.12",
@@ -35,7 +29,6 @@
     "@vitejs/plugin-react": "^4.3.4",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^20.14.5",
-    "jpeg-js": "^0.4.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"

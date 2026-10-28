@@ -10,9 +10,9 @@ export interface RealSalesDetail {
   containerPrice: string;
   containerQtySource: 'csv' | 'manual';
   containerQtyReason: string | null;
-  /** OCR の読取値と確定値。どの項目をどう直したかを残す */
-  readings: { field: string; ocrValue: string | null; finalValue: string | null; source: string; edited: boolean }[];
-  /** 入力ファイルの指紋。写真そのものは保存しない */
+  /** 取り込んだ値と確定値。どの項目をどう直したかを残す */
+  readings: { field: string; readValue: string | null; finalValue: string | null; source: string; edited: boolean }[];
+  /** 入力ファイルの指紋 */
   files: { kind: 'photo' | 'csv' | 'journalFile'; fileName: string; sha256: string }[];
   /** 確定時に適用したマスタ */
   masters: RealSalesMasters;

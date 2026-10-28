@@ -297,8 +297,8 @@ describe('売上計算の記録（要件§11.7）', () => {
       containerQtySource: 'csv' as const,
       containerQtyReason: null,
       readings: [
-        { field: '総計1（税抜値割引前）', ocrValue: '0234567', finalValue: '1234567', source: 'corrected', edited: false },
-        { field: '値割引合計', ocrValue: '1000', finalValue: '1001', source: 'checked', edited: true },
+        { field: '総計1（税抜値割引前）', readValue: '0234567', finalValue: '1234567', source: 'corrected', edited: false },
+        { field: '値割引合計', readValue: '1000', finalValue: '1001', source: 'checked', edited: true },
       ],
       files: [{ kind: 'photo' as const, fileName: 'j.jpg', sha256: 'a'.repeat(64) }],
       masters: { channels: [], ignoredPayments: ['ナカペイ'], containerPrices: [], extractRules: [] },

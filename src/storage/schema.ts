@@ -206,7 +206,8 @@ CREATE TABLE IF NOT EXISTS rs_monthly_channel (
   PRIMARY KEY (run_id, channel_id)
 );
 
--- 読取値と確定値（監査用）。OCR の候補をどう直したかを残す
+-- 取り込んだ値と確定値（監査用）。どの項目を手で直したかを残す
+-- ocr_value 列は画像OCR時代の名前。いまは読み取り結果ファイルの値が入る
 CREATE TABLE IF NOT EXISTS rs_reading (
   run_id      INTEGER NOT NULL REFERENCES processing_run(run_id) ON DELETE CASCADE,
   field       TEXT    NOT NULL,
@@ -216,7 +217,7 @@ CREATE TABLE IF NOT EXISTS rs_reading (
   edited      INTEGER NOT NULL DEFAULT 0
 );
 
--- 入力ファイルの指紋。写真そのものは保存しない（確定-08）
+-- 入力ファイルの指紋（確定-08）
 CREATE TABLE IF NOT EXISTS rs_input_file (
   run_id    INTEGER NOT NULL REFERENCES processing_run(run_id) ON DELETE CASCADE,
   kind      TEXT    NOT NULL,

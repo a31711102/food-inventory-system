@@ -98,7 +98,7 @@ async function waitBreakdown(): Promise<void> {
   await waitFor(() => expect(text()).toContain('当月売上高（食材費計算用）'));
 }
 
-describe('STEP 5 ジャーナルの読み取り結果ファイル（写真を使わない道）', () => {
+describe('STEP 5 ジャーナルの読み取り結果ファイル', () => {
   /** 前工程（店舗オーナー）が写真を読み取って作ったファイル。値は架空 */
   const journalCsv = (): string =>
     [
@@ -118,7 +118,7 @@ describe('STEP 5 ジャーナルの読み取り結果ファイル（写真を使
     await h.user.upload(slot.querySelector('input[type=file]') as HTMLInputElement, new File([bytes.slice().buffer as ArrayBuffer], 'journal.csv'));
   }
 
-  it('ファイルの値がそのまま項目に入り、写真なしで計算できる', async () => {
+  it('ファイルの値がそのまま項目に入り、そのまま計算できる', async () => {
     const h = setupWithoutMasters();
     await openStep5(h);
     await importMasters(h);
@@ -134,7 +134,7 @@ describe('STEP 5 ジャーナルの読み取り結果ファイル（写真を使
     expect(cards.find((c) => c.includes('検算② 商品別売上CSV'))).toContain('一致');
   }, 60000);
 
-  it('写真を使わずに確定でき、確定値が分析へ渡る', async () => {
+  it('ファイルの値で確定でき、確定値が分析へ渡る', async () => {
     const h = setupWithoutMasters();
     await openStep5(h, true);
     await importMasters(h);
@@ -142,7 +142,7 @@ describe('STEP 5 ジャーナルの読み取り結果ファイル（写真を使
     await uploadJournalFile(h);
     await waitBreakdown();
 
-    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
+    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     await h.user.click(buttonByText('この内容で確定'));
     await waitFor(() => expect(text()).toContain('当月売上高を確定しました'));
@@ -208,7 +208,7 @@ describe('STEP 5 売上計算', () => {
     expect(cards.find((c) => c.includes('検算② 商品別売上CSV'))).toContain('一致');
   }, 60000);
 
-  it('RS-04 「写真と見比べて確認しました」を付けるまで確定できない', async () => {
+  it('RS-04 「ジャーナルと見比べて確認しました」を付けるまで確定できない', async () => {
     const h = setupWithoutMasters();
     await openStep5(h);
     await importMasters(h);
@@ -216,7 +216,7 @@ describe('STEP 5 売上計算', () => {
     await enterJournal(h);
     await waitBreakdown();
     expect(buttonByText('この内容で確定').disabled).toBe(true);
-    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
+    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     await waitFor(() => expect(buttonByText('この内容で確定').disabled).toBe(false));
   }, 60000);
@@ -241,7 +241,7 @@ describe('STEP 5 売上計算', () => {
     await waitBreakdown();
     typeInto('営業月', '2026-01');
     await waitFor(() => expect(text()).toContain('ジャーナルの営業月が対象年月と違います'));
-    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
+    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     expect(buttonByText('この内容で確定').disabled).toBe(true);
   }, 60000);
@@ -261,7 +261,7 @@ describe('STEP 5 売上計算', () => {
     await uploadCsv(h);
     await enterJournal(h);
     await waitBreakdown();
-    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
+    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     await h.user.click(buttonByText('この内容で確定'));
     await waitFor(() => expect(text()).toContain('当月売上高を確定しました'));
@@ -280,14 +280,14 @@ describe('STEP 5 売上計算', () => {
     expect(wb.cell('分析用', 'C4')?.value).toBe(Number(TEST_EXPECTED.realSales));
   }, 90000);
 
-  it('確定後に読み取り値を変えると、確定は取り消される', async () => {
+  it('確定後に値を変えると、確定は取り消される', async () => {
     const h = setupWithoutMasters();
     await openStep5(h);
     await importMasters(h);
     await uploadCsv(h);
     await enterJournal(h);
     await waitBreakdown();
-    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))!.querySelector('input')!;
+    const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('見比べて'))!.querySelector('input')!;
     await h.user.click(check);
     await h.user.click(buttonByText('この内容で確定'));
     await waitFor(() => expect(text()).toContain('当月売上高を確定しました'));

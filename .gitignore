@@ -32,4 +32,3 @@ Thumbs.db
 *.csv
 
 # OCR の部品（scripts/copy-ocr-assets.mjs が node_modules から作る）
-public/ocr/

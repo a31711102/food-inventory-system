@@ -5,20 +5,20 @@
  *   配達代行手数料合計 = Σ（チャネル別売上 × チャネル別手数料率）   … 途中で丸めない
  *   弁当容器代 = 容器対象出数 × 容器単価
  *
- * ジャーナルの値は OCR の候補を人が確認・修正したもの（JournalEntry）を受け取る。
+ * ジャーナルの値は、読み取り結果ファイルから取り込むか画面で入力したもの（JournalEntry）を受け取る。
  * 読み取りの誤りは次の2つの検算で検出する（要件§11.3）。
  *
  *   ① 売掛欄の内訳の合計 = 売掛合計
  *   ② 総計1 − 値割引合計 + 値割引消費税 = 商品別売上CSVの売上金額合計
  *
- * ②は CSV に日付列が無いことへの代替で、写真と CSV が同じ月かの確認にもなる。
+ * ②は CSV に日付列が無いことへの代替で、ジャーナルと CSV が同じ月かの確認にもなる。
  */
 import { IssueCollector, type IssueDetail, type ValidationIssue } from '../issues';
 import { add, fromInt, isInteger, mul, parseDecimal, sub, toDecimalString, ZERO, type Fixed } from './fixed';
 import { classifyPaymentLabel, resolveMasters, type RealSalesMasters } from './masters';
 import type { ContainerExtraction } from './productSalesCsv';
 
-/** 売掛欄の1行（表記と金額）。表記は写真の印字のまま */
+/** 売掛欄の1行（表記と金額）。表記はジャーナルの印字のまま */
 export interface ReceivableLine {
   label: string;
   amount: string;
@@ -69,7 +69,7 @@ export interface CheckResult {
 export interface ChannelFee {
   channelId: string;
   name: string;
-  /** 写真上の表記 */
+  /** ジャーナル上の表記 */
   label: string;
   sales: Fixed;
   rate: Fixed;
@@ -111,7 +111,7 @@ function money(text: string | null | undefined): Fixed | null {
   return v;
 }
 
-/** CSV から逆算した「総計1 があるべき値」。OCR の誤読を正す候補に使う */
+/** CSV から逆算した「総計1 があるべき値」。検算②で差を示すのに使う */
 export function expectedGrossFromCsv(csvAmountTotal: number, discountTotal: string | null, discountTax: string | null): string | null {
   const d = money(discountTotal);
   const t = money(discountTax);
@@ -134,11 +134,11 @@ export function computeRealSales(input: RealSalesInput): RealSalesResult {
 
   // --- 営業月 ---
   if (!j.businessYm) {
-    issues.add('E020', 'ジャーナルの営業月が読み取れていません。写真の「営業月」を確認して入力してください。');
+    issues.add('E020', 'ジャーナルの営業月が入っていません。ジャーナルの「営業月」を確認して入力してください。');
   } else if (j.businessYm !== targetYm) {
     issues.add(
       'E016',
-      `ジャーナルの営業月が対象年月と違います（ジャーナル: ${j.businessYm} / 対象年月: ${targetYm}）。別の月の写真か、対象年月の指定を確認してください。`,
+      `ジャーナルの営業月が対象年月と違います（ジャーナル: ${j.businessYm} / 対象年月: ${targetYm}）。別の月のジャーナルか、対象年月の指定を確認してください。`,
     );
   }
 
@@ -174,7 +174,7 @@ export function computeRealSales(input: RealSalesInput): RealSalesResult {
     fees.push({ channelId: c.id, name: c.name, label: line.label, sales: amount, rate: c.rate, rateText: c.rateText, fee: mul(amount, c.rate) });
   }
   if (badAmount.length > 0) {
-    issues.add('E020', `売掛欄に金額として読めない値があります（${badAmount.join(' / ')}）。写真を見て入力し直してください。`);
+    issues.add('E020', `売掛欄に金額として読めない値があります（${badAmount.join(' / ')}）。ジャーナルを見て入力し直してください。`);
   }
   const dup = [...seen].filter(([, labels]) => labels.length > 1);
   if (dup.length > 0) {
@@ -194,7 +194,7 @@ export function computeRealSales(input: RealSalesInput): RealSalesResult {
     'W027',
     missing.map((c) => ({ ref: {}, text: c.name })),
     (n, d) =>
-      `登録済みの代行チャネル ${n} 件が写真の売掛欄にありません（${d.map((x) => x.text).join(' / ')}）。その月の売上が無かったなら0円として扱います。読み落としでないか写真を確認してください。`,
+      `登録済みの代行チャネル ${n} 件がジャーナルの売掛欄にありません（${d.map((x) => x.text).join(' / ')}）。その月の売上が無かったなら0円として扱います。読み落としでないかジャーナルを確認してください。`,
   );
 
   // --- 容器対象出数 ---
@@ -219,11 +219,11 @@ export function computeRealSales(input: RealSalesInput): RealSalesResult {
   // --- 検算 ---
   const receivables = checkReceivables(j);
   if (receivables.status === 'ng') {
-    issues.add('W028', `検算①が合いません。売掛欄の内訳の合計 ${receivables.left} 円が、売掛合計 ${receivables.right} 円と一致しません。読み取り値を写真と見比べてください。`);
+    issues.add('W028', `検算①が合いません。売掛欄の内訳の合計 ${receivables.left} 円が、売掛合計 ${receivables.right} 円と一致しません。値をジャーナルと見比べてください。`);
   }
   const csv = checkAgainstCsv(j, csvAmountTotal);
   if (csv.status === 'ng') {
-    issues.add('W028', `検算②が合いません。${csv.note}写真と商品別売上CSVが同じ月のものか、総計1・値割引の読み取り値を確認してください。`);
+    issues.add('W028', `検算②が合いません。${csv.note}ジャーナルと商品別売上CSVが同じ月のものか、総計1・値割引の値を確認してください。`);
   }
 
   if (gross === null || containerQty === null || resolved.containerPrice === null) {

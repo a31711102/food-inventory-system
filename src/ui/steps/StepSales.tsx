@@ -1,13 +1,16 @@
 /**
  * STEP 5 売上計算（要件§11.6）。
  *
- * ジャーナル写真を端末内で読み取り、商品別売上CSVから容器対象出数を数え、
- * 料率・容器単価を当てて当月売上高（総計1 − 代行手数料 − 弁当容器代）を出す。
- * 算出方式の選択は置かない。画面に出すのは計算の中身だけにして、操作者が迷わないようにする。
+ * ジャーナルの値は**前工程で作った読み取り結果ファイル**（CSV・JSON）で受け取り、
+ * 商品別売上CSVから容器対象出数を数え、料率・容器単価を当てて
+ * 当月売上高（総計1 − 代行手数料 − 弁当容器代）を出す。
  *
- * 読み取り値は候補であり、写真の該当行と並べて照合し、人が確定する。
- * 検算（①売掛合計・②CSV）が合わない・補正した・消去法で決めた項目は目立たせる。
- * 写真・CSV・読取値・マスタのどれかが変われば確定を取り消す（§11.6-8）。
+ * 端末内の画像OCRは廃止した（2026-10-28）。感熱紙の印字＋写真では精度が足りず、
+ * 写真を外部のOCRへ送ることは要件§11.3 で禁じているため、読み取りは前工程に任せる。
+ * ファイルが無くても、ジャーナルを見ながら画面で直接入力すれば計算できる。
+ *
+ * 取り込んだ値は候補であり、確定は必ず人が行う。検算（①売掛合計・②CSV）が合わない項目は目立たせる。
+ * ファイル・CSV・入力値・マスタのどれかが変われば確定を取り消す（§11.6-8）。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, Note, IssueList, FileSlot } from '../components';
@@ -19,7 +22,6 @@ import { toDecimalString, type Fixed } from '../../domain/realSales/fixed';
 import { channelRow, EPOCH_YM, KNOWN_CHANNELS, resolveMasters, type RealSalesMasters } from '../../domain/realSales/masters';
 import { importMastersFromWorkbook } from '../../domain/realSales/masterImport';
 import { extractContainerQty, readProductSalesCsv } from '../../domain/realSales/productSalesCsv';
-import { mapFields, type FieldReading, type JournalOcrResult, type LabelGroup, type ReceivableReading } from '../../ocr/journalOcr';
 import { sha256Hex } from '../../ingest/fileIdentity';
 import type { RealSalesDetail } from '../../domain/realSales/sales';
 
@@ -39,12 +41,21 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   receivableTotal: '売掛（合計）',
 };
 
-const SOURCE_TEXT: Record<FieldReading['source'] | 'file', { text: string; cls: string }> = {
-  checked: { text: '検算で確認', cls: 'tag-reg' },
-  corrected: { text: '検算で補正・要確認', cls: 'tag-unreg' },
-  ocr: { text: '読取', cls: 'tag-plain' },
-  none: { text: '読めず・要入力', cls: 'tag-unreg' },
+/** 項目の値がどこから来たか */
+type ValueSource = 'file' | 'none';
+
+interface Reading {
+  value: string | null;
+  source: ValueSource;
+}
+
+interface ReceivableReadingLine extends Reading {
+  label: string;
+}
+
+const SOURCE_TEXT: Record<ValueSource, { text: string; cls: string }> = {
   file: { text: '取込ファイル', cls: 'tag-reg' },
+  none: { text: '未入力', cls: 'tag-unreg' },
 };
 
 /** 読み取り結果ファイルの書き方（画面に出す見本）。金額は架空 */
@@ -77,10 +88,7 @@ UE配達代行,123457
 ※ 売掛欄の内訳は、ジャーナルに出ている行をそのまま並べてください（手数料の対象かどうかはシステムが判断します）。
 ※ 金額は税込・税抜を変えず、ジャーナルの数字をそのまま書いてください。`;
 
-/** 前工程で作った読み取り結果ファイルの値を、写真を読んだときと同じ形にする */
-function fileReading(value: string | null): FieldReading {
-  return { value, candidates: value === null ? [] : [{ value, votes: 1 }], row: null, source: value === null ? 'none' : ('file' as FieldReading['source']) };
-}
+const fileReading = (value: string | null): Reading => ({ value, source: value === null ? 'none' : 'file' });
 
 export function StepSales({
   targetYm,
@@ -113,7 +121,7 @@ export function StepSales({
         <Note>
           <strong>当月売上高 ＝ 総計1 − 代行手数料 − 弁当容器代</strong>
           <br />
-          ジャーナル（店舗売上レポート）の写真と、POS の商品別売上CSVから計算します。写真が無い月は、写真を見ながら下の表に手で入力しても計算できます。
+          ジャーナル（店舗売上レポート）の値と、POS の商品別売上CSVから計算します。ジャーナルの値は、前工程で作った読み取り結果ファイルで取り込むか、下の表に直接入力します。
         </Note>
       </Panel>
 
@@ -159,24 +167,18 @@ function RealSalesForm({
   onNext: () => void | Promise<void>;
   running: boolean;
 }): JSX.Element {
-  const [photo, setPhoto] = useState<(UploadedFile & { url: string }) | null>(null);
   const [csv, setCsv] = useState<UploadedFile | null>(null);
-  /** 前工程（店舗オーナー）が写真を読み取って作ったファイル。写真の代わりに使える */
+  /** 前工程（店舗オーナー）がジャーナルを読み取って作ったファイル */
   const [journalFile, setJournalFile] = useState<UploadedFile | null>(null);
-  const [ocr, setOcr] = useState<JournalOcrResult | null>(null);
-  const [ocrState, setOcrState] = useState<{ phase: 'idle' | 'running' | 'done' | 'error'; done?: number; total?: number; message?: string }>({ phase: 'idle' });
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [extraLines, setExtraLines] = useState<ReceivableLine[]>([]);
   const [manualQty, setManualQty] = useState<{ on: boolean; qty: string; reason: string }>({ on: false, qty: '', reason: '' });
   const [checkedByUser, setCheckedByUser] = useState(false);
-  const [crops, setCrops] = useState<Record<number, string>>({});
 
   const resolved = useMemo(() => resolveMasters(masters, targetYm), [masters, targetYm]);
-  const groups: LabelGroup[] = useMemo(
-    () => [
-      ...KNOWN_CHANNELS.map((c) => ({ id: c.id, labels: [c.name, ...c.aliases] })),
-      ...resolved.ignoredPayments.map((l) => ({ id: `ignored:${l}`, labels: [l] })),
-    ],
+  /** 売掛欄の表記の候補（入力の補助に出す） */
+  const labelChoices = useMemo(
+    () => [...KNOWN_CHANNELS.map((c) => c.name), ...resolved.ignoredPayments],
     [resolved.ignoredPayments],
   );
 
@@ -188,26 +190,22 @@ function RealSalesForm({
 
   const parsedFile = useMemo(() => (journalFile ? readJournalFile(journalFile.bytes, journalFile.fileName) : null), [journalFile]);
 
-  // 項目の値は、読み取り結果ファイルがあればそれを使い、無ければ写真の読み取りから作る。
-  // OCR の行から項目への割り当ては、CSV が後から来ても検算②をやり直せるよう、ここで行う。
   const fields = useMemo(() => {
-    if (parsedFile && parsedFile.issues.length === 0) {
-      return {
-        businessYm: fileReading(parsedFile.businessYm),
-        grossTotal: fileReading(parsedFile.grossTotal),
-        discountTotal: fileReading(parsedFile.discountTotal),
-        discountTax: fileReading(parsedFile.discountTax),
-        receivableTotal: fileReading(parsedFile.receivableTotal),
-        receivables: parsedFile.receivables.map((l) => ({ ...fileReading(l.amount), label: l.label, labelBy: 'exact' as const })),
-      };
-    }
-    return ocr ? { ...mapFields(ocr.rows, { receivableGroups: groups, csvAmountTotal: csvFile?.amountTotal ?? null }), businessYm: ocr.businessYm } : null;
-  }, [parsedFile, ocr, groups, csvFile?.amountTotal]);
+    if (!parsedFile || parsedFile.issues.length > 0) return null;
+    return {
+      businessYm: fileReading(parsedFile.businessYm),
+      grossTotal: fileReading(parsedFile.grossTotal),
+      discountTotal: fileReading(parsedFile.discountTotal),
+      discountTax: fileReading(parsedFile.discountTax),
+      receivableTotal: fileReading(parsedFile.receivableTotal),
+      receivables: parsedFile.receivables.map((l): ReceivableReadingLine => ({ ...fileReading(l.amount), label: l.label })),
+    };
+  }, [parsedFile]);
 
-  const valueOf = (key: string, f: FieldReading | undefined): string => edits[key] ?? f?.value ?? '';
+  const valueOf = (key: string, f: Reading | undefined): string => edits[key] ?? f?.value ?? '';
   const journal: JournalEntry = {
     businessYm: valueOf('businessYm', fields?.businessYm) || null,
-    storeName: parsedFile?.storeName ?? ocr?.storeName ?? null,
+    storeName: parsedFile?.storeName ?? null,
     grossTotal: valueOf('grossTotal', fields?.grossTotal) || null,
     discountTotal: valueOf('discountTotal', fields?.discountTotal) || null,
     discountTax: valueOf('discountTax', fields?.discountTax) || null,
@@ -239,7 +237,7 @@ function RealSalesForm({
   const b = result.breakdown;
 
   // 入力が変わったら確定を取り消す（再確認・再確定を求める。要件§11.6-8）
-  const signature = JSON.stringify({ journal, manualQty, csv: csv?.fileName, csvLen: csv?.bytes.length, photo: photo?.fileName, jfile: journalFile?.fileName, jfileLen: journalFile?.bytes.length, masters, targetYm });
+  const signature = JSON.stringify({ journal, manualQty, csv: csv?.fileName, csvLen: csv?.bytes.length, jfile: journalFile?.fileName, jfileLen: journalFile?.bytes.length, masters, targetYm });
   const confirmedSig = useRef<string | null>(null);
   useEffect(() => {
     if (confirmed && confirmedSig.current !== null && confirmedSig.current !== signature) {
@@ -249,35 +247,14 @@ function RealSalesForm({
     }
   }, [signature, confirmed, onUnconfirm]);
 
-  const runOcr = async (file: UploadedFile): Promise<void> => {
-    setOcrState({ phase: 'running', done: 0, total: 1 });
-    setEdits({});
-    setExtraLines([]);
-    setCheckedByUser(false);
-    try {
-      const { readJournalInBrowser, cropToDataUrl } = await import('../../ocr/browser');
-      const r = await readJournalInBrowser(new Blob([file.bytes.slice().buffer as ArrayBuffer]), {
-        receivableGroups: groups,
-        csvAmountTotal: csvFile?.amountTotal ?? null,
-        onProgress: (done, total) => setOcrState({ phase: 'running', done, total }),
-      });
-      setOcr(r);
-      setCrops(Object.fromEntries(r.rows.map((row) => [row.index, cropToDataUrl(r.base, row.rect)])));
-      setOcrState({ phase: 'done' });
-    } catch (e) {
-      setOcrState({ phase: 'error', message: e instanceof Error ? e.message : String(e) });
-    }
-  };
-
   const doConfirm = async (): Promise<void> => {
     if (!b) return;
     confirmedSig.current = signature;
-    // 監査用に、OCR の読取値（多数決）と確定値、どれを手で直したかを残す（要件§11.7）
-    const ocrValue = (f: FieldReading | undefined): string | null => f?.candidates.find((c) => !c.derived)?.value ?? null;
+    // 監査用に、取り込んだ値と確定値、どれを手で直したかを残す（要件§11.7）
     const readings: RealSalesDetail['readings'] = [
       ...(Object.keys(FIELD_LABELS) as FieldKey[]).map((k) => ({
         field: FIELD_LABELS[k],
-        ocrValue: ocrValue(fields?.[k]),
+        readValue: fields?.[k]?.value ?? null,
         finalValue: journal[k] ?? null,
         source: fields?.[k]?.source ?? 'manual',
         edited: edits[k] !== undefined,
@@ -286,15 +263,14 @@ function RealSalesForm({
         const f = fields?.receivables[i];
         return {
           field: `売掛内訳:${l.label}`,
-          ocrValue: ocrValue(f),
+          readValue: f?.value ?? null,
           finalValue: l.amount,
-          source: f ? `${f.source}/${f.labelBy}` : 'manual',
+          source: f?.source ?? 'manual',
           edited: edits[`recv:${i}:amount`] !== undefined || edits[`recv:${i}:label`] !== undefined || !f,
         };
       }),
     ];
     const files: RealSalesDetail['files'] = [];
-    if (photo) files.push({ kind: 'photo', fileName: photo.fileName, sha256: await sha256Hex(photo.bytes) });
     if (csv) files.push({ kind: 'csv', fileName: csv.fileName, sha256: await sha256Hex(csv.bytes) });
     if (journalFile) files.push({ kind: 'journalFile', fileName: journalFile.fileName, sha256: await sha256Hex(journalFile.bytes) });
     await onConfirm({
@@ -316,10 +292,10 @@ function RealSalesForm({
     });
   };
 
+  // 取り込めなかった（空の）項目は、ジャーナルを見ながら手で入れてもらう
   const attention = fields
-    ? [fields.grossTotal, fields.discountTotal, fields.discountTax, fields.receivableTotal, ...fields.receivables].filter(
-        (f) => f.source === 'corrected' || f.source === 'none' || ('labelBy' in f && (f as ReceivableReading).labelBy !== 'exact'),
-      ).length
+    ? [fields.grossTotal, fields.discountTotal, fields.discountTax, fields.receivableTotal, ...fields.receivables].filter((f) => f.source === 'none')
+        .length
     : 0;
   const canConfirm = b !== null && blocking.length === 0 && checkedByUser && !confirmed;
 
@@ -327,10 +303,10 @@ function RealSalesForm({
     <>
       <MasterPanel targetYm={targetYm} role={role} masters={masters} onSetMasters={onSetMasters} resolvedIssues={resolved.issues} />
 
-      <Panel title="ジャーナルと商品別売上CSV" hint="ジャーナル（店舗売上レポート）の値と、POS の商品別売上CSVを指定します。写真を使う場合も、このPCの中だけで読み取り、外部へは送りません。">
+      <Panel title="ジャーナルと商品別売上CSV" hint="ジャーナル（店舗売上レポート）の読み取り結果ファイルと、POS の商品別売上CSVを指定します。ファイルはこのPCの中だけで読み、外部へは送りません。">
         <FileSlot
-          title="ジャーナルの読み取り結果ファイル（推奨）"
-          description="前工程で写真を読み取って作ったファイル（CSV・JSON）。指定すると、その値をそのまま使います。書き方は下の「作り方」を開いてください。"
+          title="ジャーナルの読み取り結果ファイル"
+          description="前工程でジャーナルを読み取って作ったファイル（CSV・JSON）。指定すると、その値をそのまま使います。無いときは下の表に直接入力できます。書き方は下の「作り方」を開いてください。"
           accept=".csv,.tsv,.txt,.json"
           file={journalFile}
           onSelect={(f) => void f.arrayBuffer().then((buf) => setJournalFile({ fileName: f.name, bytes: new Uint8Array(buf) }))}
@@ -339,7 +315,7 @@ function RealSalesForm({
         {parsedFile && parsedFile.issues.length > 0 ? <IssueList issues={parsedFile.issues} levels={['BLOCKING']} /> : null}
         {parsedFile && parsedFile.issues.length === 0 ? (
           <Note>
-            読み取り結果ファイルの値を使います（売掛欄の内訳 {parsedFile.receivables.length} 件）。写真の読み取りは行いません。
+            読み取り結果ファイルの値を使います（売掛欄の内訳 {parsedFile.receivables.length} 件）。違っていれば下の表で直せます。
           </Note>
         ) : null}
         <details className="photo-view">
@@ -351,51 +327,19 @@ function RealSalesForm({
         </details>
 
         <FileSlot
-          title="ジャーナル写真（読み取り結果ファイルが無いとき）"
-          description="売掛欄（menu・シェアデリなど）が写っている写真。影・重なりがあっても読めますが、真上から明るく撮ると確実です。"
-          accept="image/*"
-          file={photo}
-          onSelect={(f) =>
-            void f.arrayBuffer().then((buf) => {
-              const bytes = new Uint8Array(buf);
-              if (photo) URL.revokeObjectURL(photo.url);
-              const next = { fileName: f.name, bytes, url: URL.createObjectURL(f) };
-              setPhoto(next);
-              setOcr(null);
-              void runOcr(next);
-            })
-          }
-          onClear={() => {
-            if (photo) URL.revokeObjectURL(photo.url);
-            setPhoto(null);
-            setOcr(null);
-            setOcrState({ phase: 'idle' });
-          }}
-        />
-        <FileSlot
           title="商品別売上CSV"
-          description="POS の「商品別売上」。容器対象出数を数え、写真の総計1 との検算（②）にも使います。"
+          description="POS の「商品別売上」。容器対象出数を数え、ジャーナルの総計1 との検算（②）にも使います。"
           accept=".csv"
           file={csv}
           onSelect={(f) => void f.arrayBuffer().then((buf) => setCsv({ fileName: f.name, bytes: new Uint8Array(buf) }))}
           onClear={() => setCsv(null)}
         />
-        {ocrState.phase === 'running' ? (
-          <Note>
-            写真を読み取っています…（{ocrState.done ?? 0} / {ocrState.total ?? 1}）。初回は読み取りの部品を読み込むため少し時間がかかります。
-          </Note>
-        ) : null}
-        {ocrState.phase === 'error' ? (
-          <Note variant="warn">
-            写真を読み取れませんでした（{ocrState.message}）。下の表に写真を見ながら入力すれば続けられます。
-          </Note>
-        ) : null}
       </Panel>
 
-      <Panel title="読み取り結果の照合" hint="写真の行・読み取った文字・値を並べています。違っていれば値の欄を直してください。検算で補正した値・読めなかった値は色が付いています。">
+      <Panel title="値の確認" hint="取り込んだ値を一覧にしています。ジャーナルと見比べて、違っていれば直してください。ファイルが無いときは、ここに直接入力しても計算できます。">
         {attention > 0 ? (
           <Note variant="warn">
-            <strong>確認が必要な項目が {attention} 件あります。</strong>色付きの項目を、写真の行と見比べてください。
+            <strong>値が入っていない項目が {attention} 件あります。</strong>ジャーナルを見て入力してください。
           </Note>
         ) : null}
         <div className="scroll">
@@ -403,8 +347,6 @@ function RealSalesForm({
             <thead>
               <tr>
                 <th>項目</th>
-                <th>写真の該当行</th>
-                <th>読み取った文字</th>
                 <th className="right">値</th>
                 <th>状態</th>
               </tr>
@@ -413,10 +355,8 @@ function RealSalesForm({
               {(Object.keys(FIELD_LABELS) as FieldKey[]).map((k) => {
                 const f = fields?.[k];
                 return (
-                  <tr key={k} className={f && (f.source === 'corrected' || f.source === 'none') ? 'anomaly' : undefined}>
+                  <tr key={k} className={f?.source === 'none' ? 'anomaly' : undefined}>
                     <td className="nowrap">{FIELD_LABELS[k]}</td>
-                    <td>{f?.row && crops[f.row.index] ? <img className="ocr-crop" src={crops[f.row.index]} alt={`${FIELD_LABELS[k]}の行`} /> : <span className="muted">—</span>}</td>
-                    <td className="ocr-text">{f?.row ? f.row.text : <span className="muted">—</span>}</td>
                     <td className="num">
                       <input
                         type={k === 'businessYm' ? 'month' : 'text'}
@@ -428,23 +368,21 @@ function RealSalesForm({
                       />
                     </td>
                     <td>
-                      {f ? <span className={SOURCE_TEXT[f.source].cls}>{SOURCE_TEXT[f.source].text}</span> : <span className="muted">未読取</span>}
+                      {f ? <span className={SOURCE_TEXT[f.source].cls}>{SOURCE_TEXT[f.source].text}</span> : <span className="muted">手入力</span>}
                       {edits[k] !== undefined ? <span className="tag-plain">修正済み</span> : null}
-                      {f?.note ? <div className="muted small">{f.note}</div> : null}
                     </td>
                   </tr>
                 );
               })}
               <tr>
-                <th colSpan={5} style={{ textAlign: 'left' }}>
+                <th colSpan={3} style={{ textAlign: 'left' }}>
                   売掛欄の内訳（代行チャネルは手数料の対象、それ以外は対象外）
                 </th>
               </tr>
               {(fields?.receivables ?? []).map((r, i) => {
                 const label = edits[`recv:${i}:label`] ?? r.label;
-                const needs = r.source === 'corrected' || r.source === 'none' || r.labelBy !== 'exact';
                 return (
-                  <tr key={`r${i}`} className={needs ? 'anomaly' : undefined}>
+                  <tr key={`r${i}`} className={r.source === 'none' ? 'anomaly' : undefined}>
                     <td>
                       <input
                         type="text"
@@ -455,8 +393,6 @@ function RealSalesForm({
                         style={{ width: 150 }}
                       />
                     </td>
-                    <td>{r.row && crops[r.row.index] ? <img className="ocr-crop" src={crops[r.row.index]} alt={`${label}の行`} /> : null}</td>
-                    <td className="ocr-text">{r.row ? r.row.text : <span className="muted">—</span>}</td>
                     <td className="num">
                       <input
                         type="text"
@@ -469,9 +405,7 @@ function RealSalesForm({
                     </td>
                     <td>
                       <span className={SOURCE_TEXT[r.source].cls}>{SOURCE_TEXT[r.source].text}</span>
-                      {r.labelBy === 'elimination' ? <span className="tag-unreg">表記は消去法</span> : null}
-                      {r.labelBy === 'none' ? <span className="tag-unreg">表記を選んでください</span> : null}
-                      {r.note ? <div className="muted small">{r.note}</div> : null}
+                      {edits[`recv:${i}:label`] !== undefined || edits[`recv:${i}:amount`] !== undefined ? <span className="tag-plain">修正済み</span> : null}
                     </td>
                   </tr>
                 );
@@ -481,8 +415,6 @@ function RealSalesForm({
                   <td>
                     <input type="text" list="receivable-labels" aria-label={`追加${i + 1}の表記`} value={l.label} onChange={(e) => setExtraLines((xs) => xs.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} style={{ width: 150 }} />
                   </td>
-                  <td className="muted">手入力</td>
-                  <td className="muted">—</td>
                   <td className="num">
                     <input type="text" inputMode="numeric" aria-label={`追加${i + 1}の金額`} value={l.amount} onChange={(e) => setExtraLines((xs) => xs.map((x, j) => (j === i ? { ...x, amount: e.target.value.replace(/[,，¥￥\s]/g, '') } : x)))} style={{ width: 150, textAlign: 'right' }} />
                   </td>
@@ -496,8 +428,8 @@ function RealSalesForm({
             </tbody>
           </table>
           <datalist id="receivable-labels">
-            {groups.map((g) => (
-              <option key={g.id} value={g.labels[0]} />
+            {labelChoices.map((l) => (
+              <option key={l} value={l} />
             ))}
           </datalist>
         </div>
@@ -505,54 +437,10 @@ function RealSalesForm({
           <button type="button" onClick={() => setExtraLines((xs) => [...xs, { label: '', amount: '' }])}>
             内訳の行を追加
           </button>
-          {photo ? (
-            <button type="button" onClick={() => void runOcr(photo)} disabled={ocrState.phase === 'running'}>
-              写真を読み取り直す
-            </button>
-          ) : null}
         </div>
-        {ocr && ocr.rows.length > 0 ? (
-          <details className="photo-view">
-            <summary>読み取った行をすべて表示（{ocr.rows.length} 行）</summary>
-            <p className="muted small">
-              写真から読み取った行そのままです。上の表に出ていない行や、別の行が割り当てられていないかを確かめられます。
-              金額の候補は、読み方を変えて読んだときの票数です。
-            </p>
-            <div className="scroll">
-              <table className="grid ocr-table">
-                <thead>
-                  <tr>
-                    <th>写真の行</th>
-                    <th>読み取った文字</th>
-                    <th className="right">金額の候補</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ocr.rows.map((row) => (
-                    <tr key={row.index}>
-                      <td>{crops[row.index] ? <img className="ocr-crop" src={crops[row.index]} alt={`${row.index + 1} 行目`} /> : null}</td>
-                      <td className="ocr-text">{row.text}</td>
-                      <td className="num small">
-                        {row.candidates.length === 0
-                          ? '—'
-                          : row.candidates.slice(0, 3).map((c) => `${Number(c.value).toLocaleString('ja-JP')}（${c.votes}票）`).join(' / ')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        ) : null}
-        {photo ? (
-          <details className="photo-view">
-            <summary>元の写真を表示</summary>
-            <img src={photo.url} alt="ジャーナル写真" />
-          </details>
-        ) : null}
       </Panel>
 
-      <Panel title="検算と計算内訳" hint="検算①②が合っていれば、読み取り値は信頼できます。">
+      <Panel title="検算と計算内訳" hint="検算①②が合っていれば、取り込んだ値は信頼できます。">
         <div className="kpi-row">
           <CheckCard title="検算① 売掛合計" status={b?.checks.receivables.status ?? 'skipped'} left={b?.checks.receivables.left ?? null} right={b?.checks.receivables.right ?? null} leftLabel="内訳の合計" rightLabel="売掛合計" />
           <CheckCard title="検算② 商品別売上CSV" status={b?.checks.csv.status ?? 'skipped'} left={b?.checks.csv.left ?? null} right={b?.checks.csv.right ?? null} leftLabel="総計1−値割引+税" rightLabel="CSVの売上金額" />
@@ -629,7 +517,7 @@ function RealSalesForm({
           <>
             <Note>
               <strong>当月売上高を確定しました：{yen(confirmed.realSales)} 円</strong>。分析・出力の原価率と、出力するExcelの C4 にこの値を使います。
-              写真・CSV・読み取り値・マスタを変えると確定は取り消されます。
+              ファイル・CSV・入力値・マスタを変えると確定は取り消されます。
             </Note>
             <div className="actions">
               <button type="button" className="primary" onClick={() => void onNext()} disabled={running}>
@@ -641,7 +529,7 @@ function RealSalesForm({
           <div className="actions" style={{ alignItems: 'center' }}>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="checkbox" checked={checkedByUser} onChange={(e) => setCheckedByUser(e.target.checked)} disabled={!b} />
-              <span>写真と見比べて、読み取り値を確認しました</span>
+              <span>ジャーナルと見比べて、値を確認しました</span>
             </label>
             <button type="button" className="primary" onClick={() => void doConfirm()} disabled={!canConfirm || running}>
               この内容で確定
@@ -734,7 +622,7 @@ function MasterPanel({
             <thead>
               <tr>
                 <th>チャネル</th>
-                <th>写真上の表記</th>
+                <th>ジャーナルの表記</th>
                 <th className="right">{targetYm} の料率</th>
                 <th>変更</th>
               </tr>

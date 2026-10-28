@@ -84,7 +84,7 @@ export const ISSUE_CATALOG = {
   E021: { level: 'BLOCKING', title: '代行チャネルの重複' },
   E022: { level: 'BLOCKING', title: 'ジャーナルの読み取り結果ファイルを読めない' },
   W026: { level: 'WARNING', title: '未登録の売掛項目' },
-  W027: { level: 'WARNING', title: '代行チャネルが写真に無い' },
+  W027: { level: 'WARNING', title: '代行チャネルがジャーナルに無い' },
   W028: { level: 'WARNING', title: 'ジャーナルの検算不一致' },
   W029: { level: 'WARNING', title: '商品別売上CSVに未知の分類' },
   W031: { level: 'WARNING', title: '当月売上高の前月比変動' },

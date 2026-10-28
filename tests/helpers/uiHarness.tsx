@@ -246,8 +246,8 @@ export async function goToStep(h: Harness, step: 1 | 2 | 3 | 4 | 5 | 6): Promise
 /**
  * STEP 5（売上計算）を通す。
  *
- * happy-dom では OCR（WASM・Canvas）が動かないので、写真を使わず手入力で確定する。
- * これは実運用でも「写真が読めないときの代替経路」として用意してある道と同じ。
+ * 読み取り結果ファイルを使わず、画面に直接入力して確定する
+ * （実運用でも、ファイルが無いときはこの道で進められる）。
  * 確定値は当月マスタの C4 と同じ 5,000,000 になるため、以降の期待値は変わらない。
  */
 export async function confirmSales(h: Harness): Promise<void> {
@@ -274,7 +274,7 @@ export async function confirmSales(h: Harness): Promise<void> {
   type('追加1の金額', HARNESS_SALES.receivableAmount);
 
   await waitFor(() => expect(document.body.textContent).toContain('当月売上高（食材費計算用）'));
-  const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('写真と見比べて'))?.querySelector('input');
+  const check = [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('見比べて'))?.querySelector('input');
   if (!check) throw new Error('確認のチェックが見つかりません');
   await h.user.click(check);
   await clickAndSettle(h, buttonByText('この内容で確定'));

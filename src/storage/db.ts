@@ -419,7 +419,7 @@ export class InventoryDatabase {
     for (const r of d.readings) {
       this.run(
         'INSERT INTO rs_reading (run_id, field, ocr_value, final_value, source, edited) VALUES (?, ?, ?, ?, ?, ?)',
-        [runId, r.field, r.ocrValue, r.finalValue, r.source, r.edited ? 1 : 0],
+        [runId, r.field, r.readValue, r.finalValue, r.source, r.edited ? 1 : 0],
       );
     }
     for (const f of d.files) {
