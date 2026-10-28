@@ -44,6 +44,16 @@ export interface RealSalesExpected {
   realSales: string;
 }
 
+/** 店舗オーナーの「リアル売上算出」Excel と、その月のジャーナルの値 */
+export interface SeptemberExpected {
+  journal: RealSalesExpected['journal'];
+  csvAmountTotal: number;
+  /** Excel の「チャンネル／売上」の表にある行（表記はExcelのまま） */
+  sheetChannels: { label: string; amount: string }[];
+  /** Excel の弁当容器の表にある出数 */
+  sheetContainerQty: number;
+}
+
 export interface RealExpected {
   /** 発注累計照会に入っている店舗コード */
   storeCode: string;
@@ -51,7 +61,7 @@ export interface RealExpected {
   july: MonthlyExpected;
   june: Omit<MonthlyExpected, 'totalClosingAmount' | 'costAfterLoss'>;
   /** 無ければリアル売上の実データ検証はスキップする */
-  realSales?: { august: RealSalesExpected };
+  realSales?: { august: RealSalesExpected; september?: SeptemberExpected };
 }
 
 const PATH = process.env['REAL_EXPECTED'] ?? join('tests', 'fixtures', 'real', 'expected.json');

@@ -17,7 +17,7 @@ import { Panel, Note, IssueList, FileSlot } from '../components';
 import type { Role } from '../App';
 import type { ConfirmedRealSales, UploadedFile } from '../../app/pipeline';
 import { computeRealSales, type JournalEntry, type PreviousRealSales, type ReceivableLine } from '../../domain/realSales/compute';
-import { readJournalFile } from '../../domain/realSales/journalFile';
+import { readJournalUpload, type JournalFileResult } from '../../domain/realSales/journalFile';
 import { toDecimalString, type Fixed } from '../../domain/realSales/fixed';
 import { channelRow, EPOCH_YM, KNOWN_CHANNELS, resolveMasters, type RealSalesMasters } from '../../domain/realSales/masters';
 import { importMastersFromWorkbook } from '../../domain/realSales/masterImport';
@@ -59,29 +59,36 @@ const SOURCE_TEXT: Record<ValueSource, { text: string; cls: string }> = {
 };
 
 /** 読み取り結果ファイルの書き方（画面に出す見本）。金額は架空 */
-const JOURNAL_FILE_SAMPLE = `【CSV の場合】1列目に項目、2列目に金額
+const JOURNAL_FILE_SAMPLE = `【Excel の場合】店舗オーナーの「リアル売上算出」シートをそのまま指定できます
+  営業年月 | 2026.01
+  総計１   | 1234567
+  チャンネル | 売上  | 手数料率     ← この見出しの下に、チャネルごとの売上を並べる
+  menu       | 2345  | 0.2
+  シェアデリ | 3000  | 0.2
+  …
+  ※ 行や列の位置は自由です。見出しの文字で読み取ります
+  ※「計」「差引金額」「リアル売上」の行と、弁当容器（出数）の表は読み飛ばします
+  ※ 手数料率・容器単価はシステムのマスタを使うため、シートの値は参照しません
+
+【CSV の場合】1列目に項目、2列目に金額
 項目,金額
-営業月,2026-09
+営業月,2026-01
 店舗名,○○店
 総計1（税抜値割引前）,1234567
 値割引合計,1000
 値割引消費税,80
 売掛合計,245694
 menu,2345
-シェアデリ,30003
-UE配達代行,123457
-ナカペイ,11111
+シェアデリ,3000
 
 【JSON の場合】
 {
-  "営業月": "2026-09",
+  "営業月": "2026-01",
   "総計1": 1234567,
-  "値割引合計": 1000,
-  "値割引消費税": 80,
   "売掛合計": 245694,
   "売掛内訳": [
     { "項目": "menu", "金額": 2345 },
-    { "項目": "シェアデリ", "金額": 30003 }
+    { "項目": "シェアデリ", "金額": 3000 }
   ]
 }
 
@@ -188,7 +195,21 @@ function RealSalesForm({
     [csvFile, resolved.extractRule],
   );
 
-  const parsedFile = useMemo(() => (journalFile ? readJournalFile(journalFile.bytes, journalFile.fileName) : null), [journalFile]);
+  // Excel は読み込みが非同期（ZIP を展開する）ため、state に受ける
+  const [parsedFile, setParsedFile] = useState<JournalFileResult | null>(null);
+  useEffect(() => {
+    if (!journalFile) {
+      setParsedFile(null);
+      return;
+    }
+    let live = true;
+    void readJournalUpload(journalFile.bytes, journalFile.fileName).then((r) => {
+      if (live) setParsedFile(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [journalFile]);
 
   const fields = useMemo(() => {
     if (!parsedFile || parsedFile.issues.length > 0) return null;
@@ -306,8 +327,8 @@ function RealSalesForm({
       <Panel title="ジャーナルと商品別売上CSV" hint="ジャーナル（店舗売上レポート）の読み取り結果ファイルと、POS の商品別売上CSVを指定します。ファイルはこのPCの中だけで読み、外部へは送りません。">
         <FileSlot
           title="ジャーナルの読み取り結果ファイル"
-          description="前工程でジャーナルを読み取って作ったファイル（CSV・JSON）。指定すると、その値をそのまま使います。無いときは下の表に直接入力できます。書き方は下の「作り方」を開いてください。"
-          accept=".csv,.tsv,.txt,.json"
+          description="前工程でジャーナルを読み取って作ったファイル（Excel・CSV・JSON）。店舗オーナーの「リアル売上算出」シートをそのまま指定できます。無いときは下の表に直接入力できます。"
+          accept=".xlsx,.xlsm,.csv,.tsv,.txt,.json"
           file={journalFile}
           onSelect={(f) => void f.arrayBuffer().then((buf) => setJournalFile({ fileName: f.name, bytes: new Uint8Array(buf) }))}
           onClear={() => setJournalFile(null)}
@@ -321,7 +342,7 @@ function RealSalesForm({
         <details className="photo-view">
           <summary>読み取り結果ファイルの作り方（店舗オーナー向け）</summary>
           <p className="muted small">
-            ジャーナルの写真を AI に読ませて、次のどちらかの形で保存してください。項目名はジャーナルの表記のままで構いません。
+            ジャーナルの値を次のいずれかの形で渡してください。項目名はジャーナルの表記のままで構いません。
           </p>
           <pre className="sample">{JOURNAL_FILE_SAMPLE}</pre>
         </details>

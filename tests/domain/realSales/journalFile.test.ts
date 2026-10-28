@@ -3,7 +3,8 @@
  * 値はすべて架空。前工程（店舗オーナー）が作るファイルなので、表記や書き方の揺れを受けられることを確かめる。
  */
 import { describe, it, expect } from 'vitest';
-import { readJournalFile } from '@/domain/realSales/journalFile';
+import { readJournalFile, readJournalUpload } from '@/domain/realSales/journalFile';
+import { buildSimpleWorkbook } from '../../helpers/buildXlsx';
 
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
 
@@ -78,6 +79,77 @@ describe('JSON', () => {
   it('英語のキーの内訳も読む', () => {
     const r = readJournalFile(bytes(JSON.stringify({ 総計1: 100, receivables: [{ label: 'menu', amount: '2,345' }] })), 'j.json');
     expect(r.receivables).toEqual([{ label: 'menu', amount: '2345' }]);
+  });
+});
+
+describe('Excel（店舗オーナーの「リアル売上算出」シート）', () => {
+  /** オーナーのシートと同じ作り。値はすべて架空 */
+  const sheet = (overrides: Record<string, string | number> = {}): Promise<Uint8Array> =>
+    buildSimpleWorkbook('Sheet1', {
+      A1: 'リアル売上計算シート',
+      A2: '営業年月', B2: 2026.09,
+      A4: '総計１', B4: 1234567,
+      A6: 'チャンネル', B6: '売上', C6: '手数料率', D6: '手数料額',
+      A7: 'menu', B7: 2345, C7: 0.2,
+      A8: 'シェアデリ', B8: 30003, C8: 0.275,
+      A9: 'UEラ－メン代', B9: 1001, C9: 0.33,
+      C10: '計', D10: 9999,
+      A12: '弁当容器個数計算',
+      A13: '営業年月', B13: 2026.09,
+      A15: 'チャンネル', B15: '出数', C15: '控除額単価', D15: '控除額計',
+      A16: 'TO', B16: 255, C16: 40, D16: 10200,
+      C18: '差引金額', D18: 99999,
+      C20: 'リアル売上', D20: 1164465, E20: '←分析表売上',
+      ...overrides,
+    });
+
+  it('営業年月・総計1・チャネル別売上を読む（位置ではなく文字列で照合する）', async () => {
+    const r = await readJournalUpload(await sheet(), 'リアル売上算出.xlsx');
+    expect(r.issues).toEqual([]);
+    expect(r.businessYm).toBe('2026-09');
+    expect(r.grossTotal).toBe('1234567');
+    expect(r.receivables).toEqual([
+      { label: 'menu', amount: '2345' },
+      { label: 'シェアデリ', amount: '30003' },
+      { label: 'UEラ－メン代', amount: '1001' },
+    ]);
+  });
+
+  it('弁当容器の表（出数）と、計・差引金額・リアル売上の行は読まない', async () => {
+    const r = await readJournalUpload(await sheet(), 'リアル売上算出.xlsx');
+    const labels = r.receivables.map((x) => x.label);
+    expect(labels).not.toContain('TO');
+    expect(labels).not.toContain('計');
+    expect(labels).not.toContain('差引金額');
+    expect(labels).not.toContain('リアル売上');
+  });
+
+  it('表が別の位置・別の列順でも読める（列は見出しの文字で決める）', async () => {
+    const moved = await buildSimpleWorkbook('Sheet1', {
+      D3: '総計１', E3: 1234567,
+      D5: '営業年月', E5: '2026/9',
+      C8: 'チャンネル', D8: '手数料率', E8: '売上',
+      C9: 'menu', D9: 0.2, E9: 2345,
+      C10: 'シェアデリ', D10: 0.275, E10: 30003,
+    });
+    const r = await readJournalUpload(moved, 'ずれたシート.xlsx');
+    expect(r.grossTotal).toBe('1234567');
+    expect(r.businessYm).toBe('2026-09');
+    expect(r.receivables).toEqual([
+      { label: 'menu', amount: '2345' },
+      { label: 'シェアデリ', amount: '30003' },
+    ]);
+  });
+
+  it('売掛合計・値割引がシートにあれば読む', async () => {
+    const r = await readJournalUpload(await sheet({ A22: '値割引合計', B22: 1000, A23: '値割引消費税', B23: 80, A24: '売掛合計', B24: 245694 }), 's.xlsx');
+    expect([r.discountTotal, r.discountTax, r.receivableTotal]).toEqual(['1000', '80', '245694']);
+  });
+
+  it('項目が1つも取れない Excel はエラー', async () => {
+    const other = await buildSimpleWorkbook('Sheet1', { A1: '商品別売上', A2: '大分類', B2: '中分類' });
+    const r = await readJournalUpload(other, 'ちがう.xlsx');
+    expect(r.issues.map((i) => i.code)).toEqual(['E022']);
   });
 });
 

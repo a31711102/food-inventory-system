@@ -149,6 +149,34 @@ describe('STEP 5 ジャーナルの読み取り結果ファイル', () => {
     await waitFor(() => expect(findButton('次へ：分析・出力')?.disabled).toBe(false));
   }, 60000);
 
+  it('オーナーの Excel（リアル売上算出シート）をそのまま取り込める', async () => {
+    const h = setupWithoutMasters();
+    await openStep5(h);
+    await importMasters(h);
+    await uploadCsv(h);
+    const xlsx = await buildSimpleWorkbook('Sheet1', {
+      A1: 'リアル売上計算シート',
+      A2: '営業年月', B2: Number(`${TARGET_YM.slice(0, 4)}.${TARGET_YM.slice(5)}`),
+      A4: '総計１', B4: Number(TEST_JOURNAL.grossTotal),
+      A6: 'チャンネル', B6: '売上', C6: '手数料率',
+      ...Object.fromEntries(
+        TEST_JOURNAL.receivables.flatMap((r, i) => [[`A${7 + i}`, r.label], [`B${7 + i}`, Number(r.amount)]]),
+      ),
+      A16: 'チャンネル', B16: '出数', C16: '控除額単価',
+      A17: 'TO', B17: 9999, C17: 40,
+      C19: 'リアル売上', D19: 1,
+    });
+    const slot = [...document.querySelectorAll('.file-slot')].find((x) => x.textContent?.includes('読み取り結果ファイル'))!;
+    await h.user.upload(slot.querySelector('input[type=file]') as HTMLInputElement, new File([xlsx.slice().buffer as ArrayBuffer], 'リアル売上算出.xlsx'));
+    await waitBreakdown();
+
+    const t = text();
+    expect(t).toContain('読み取り結果ファイルの値を使います');
+    expect(t).toContain('1,164,465.105'); // 架空の値での期待リアル売上
+    // 出数は商品別売上CSVから数える。Excel の「出数」の表は読まない
+    expect(t).toContain(`${TEST_EXPECTED.containerQty} 個`);
+  }, 60000);
+
   it('形式の違うファイルはエラーになり、計算内訳は出ない', async () => {
     const h = setupWithoutMasters();
     await openStep5(h);
