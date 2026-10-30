@@ -114,10 +114,40 @@ export async function exportWorkbook(
   const hCol = letterOf("purchaseQty");
   const iCol = letterOf("openingQty");
   const kCol = letterOf("unitPrice");
+  const lCol = letterOf("usageAmount");
+
+  // 自店購入で金額だけを入れた行は、当月使用高の欄に書く。欄が見つからないと
+  // その商品の使用高が0のまま出てしまうので、書けないなら出力を止める。
+  const amountRows = input.rows.filter(
+    (r) => r.usageAmountFromInput !== undefined && r.usageAmountFromInput !== null,
+  );
+  if (amountRows.length > 0 && !lCol) {
+    throw ExportBlockedError.fromIssue(
+      createIssue(
+        "E008",
+        `自店購入の金額を書き込む「当月使用高」の列が見つかりません（${amountRows.length} 件）。入力用シートの見出しを確認してください。`,
+        { sheetName },
+      ),
+    );
+  }
 
   let written = 0;
   try {
     for (const row of input.rows) {
+      const amountOnly = row.usageAmountFromInput !== undefined && row.usageAmountFromInput !== null;
+      if (amountOnly) {
+        // 数量・単価の欄は空にし、当月使用高に金額を書く（2026-10-30 店舗オーナー指示）。
+        // 期中使用量・期末在庫高の数式はそのままで、空欄から0が求まる。
+        for (const col of [gCol, hCol, iCol, kCol]) {
+          if (col) {
+            workbook.setNumber(sheetName, `${col}${row.lineNo}`, null);
+            written += 1;
+          }
+        }
+        workbook.setNumberReplacingFormula(sheetName, `${lCol!}${row.lineNo}`, row.usageAmountFromInput!);
+        written += 1;
+        continue;
+      }
       if (gCol) {
         workbook.setNumber(sheetName, `${gCol}${row.lineNo}`, row.closingQty);
         written += 1;
@@ -130,10 +160,9 @@ export async function exportWorkbook(
         workbook.setNumber(sheetName, `${iCol}${row.lineNo}`, row.openingQty);
         written += 1;
       }
-      // 単価は STEP 4 で入力した商品だけ書き戻す。本部商品の単価はマスタの値を正とする。
-      // 自店購入の候補を全商品へ広げたので「Aコードなら」では判定できない。
-      // 登録済みの自店購入品は、入力が無くてもマスタの単価をそのまま書き戻す（従来どおり）。
-      if (kCol && (row.isOwnPurchase || row.unitPriceFromInput === true)) {
+      // 登録済みの自店購入品は、金額の入力が無くてもマスタの単価をそのまま書き戻す（従来どおり）。
+      // 本部商品の単価はマスタの値を正とし、触らない。
+      if (kCol && row.isOwnPurchase) {
         workbook.setNumber(sheetName, `${kCol}${row.lineNo}`, row.unitPrice);
         written += 1;
       }

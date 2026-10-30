@@ -112,24 +112,15 @@ describe('パイプライン通し', () => {
       master: f.master,
       previous: f.previous,
       approveNewOpening: true,
-      ownPurchases: [
-        {
-          code: unsafeProductCode('A00043'),
-          purchaseQty: 24,
-          closingQty: 2,
-          unitPrice: 273,
-          note: null,
-        },
-      ],
+      ownPurchases: [{ code: unsafeProductCode('A00043'), usageAmount: 6552, note: null }],
     });
 
+    // 聞くのは使った分の合計金額だけ。数量は追わず、期末在庫は使い切り扱い（2026-10-30）
     const row = result.rows.find((r) => r.code === 'A00043')!;
-    expect(row.purchaseQty).toBe(24);
-    expect(row.closingQty).toBe(2);
-    expect(row.unitPrice).toBe(273);
-    // 期首(前月期末2) + 仕入24 - 期末2 = 24
-    expect(row.usageQty).toBe(24);
-    expect(row.usageAmount).toBe(24 * 273);
+    expect(row.usageAmount).toBe(6552);
+    expect(row.closingAmount).toBe(0);
+    expect(row.usageQty).toBeNull();
+    expect([row.purchaseQty, row.closingQty, row.openingQty, row.unitPrice]).toEqual([0, 0, 0, 0]);
   });
 
   it('登録外の商品にも自店購入を入力でき、I004 ではなく I005 で記録される', async () => {
@@ -141,20 +132,11 @@ describe('パイプライン通し', () => {
       master: f.master,
       previous: f.previous,
       approveNewOpening: true,
-      ownPurchases: [
-        {
-          code: unsafeProductCode('000140'),
-          purchaseQty: 6,
-          closingQty: 1,
-          unitPrice: 1791,
-          note: '近隣スーパーで購入',
-        },
-      ],
+      ownPurchases: [{ code: unsafeProductCode('000140'), usageAmount: 10746, note: '近隣スーパーで購入' }],
     });
 
     const row = result.rows.find((r) => r.code === '000140')!;
-    expect(row.purchaseQty).toBe(6);
-    expect(row.closingQty).toBe(1);
+    expect(row.usageAmount).toBe(10746);
 
     const i005 = result.issues.filter((i) => i.code === 'I005');
     expect(i005).toHaveLength(1);
@@ -171,7 +153,7 @@ describe('パイプライン通し', () => {
       previous: f.previous,
       approveNewOpening: true,
       ownPurchases: [
-        { code: unsafeProductCode('A00043'), purchaseQty: 24, closingQty: 2, unitPrice: 273, note: null },
+        { code: unsafeProductCode('A00043'), usageAmount: 6552, note: null },
       ],
     });
     expect(result.issues.filter((i) => i.code === 'I005')).toEqual([]);
@@ -186,13 +168,13 @@ describe('パイプライン通し', () => {
       previous: f.previous,
       approveNewOpening: true,
       ownPurchases: [
-        { code: unsafeProductCode('A10005'), purchaseQty: 99, closingQty: 9, unitPrice: 520, note: null },
+        { code: unsafeProductCode('A10005'), usageAmount: 51480, note: null },
       ],
     });
 
     const row = result.rows.find((r) => r.code === 'A10005')!;
-    expect(row.purchaseQty).not.toBe(99);
-    expect(row.closingQty).not.toBe(9);
+    expect(row.usageAmountFromInput ?? null).toBeNull();
+    expect(row.usageAmount).not.toBe(51480);
 
     const w024 = result.issues.filter((i) => i.code === 'W024');
     expect(w024).toHaveLength(1);

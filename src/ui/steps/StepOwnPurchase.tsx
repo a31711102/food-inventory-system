@@ -3,7 +3,7 @@ import { Panel, Note } from '../components';
 import type { PipelineResult } from '../../app/pipeline';
 import { searchOwnPurchaseCandidates } from '../../app/pipeline';
 import type { OwnPurchaseInput, OwnPurchaseCandidate } from '../../domain/models';
-import { formatAmount, formatQty } from '../format';
+import { formatAmount } from '../format';
 
 export function StepOwnPurchase({
   result,
@@ -20,15 +20,13 @@ export function StepOwnPurchase({
 }): JSX.Element {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<OwnPurchaseCandidate | null>(null);
-  const [purchaseQty, setPurchaseQty] = useState('');
-  const [closingQty, setClosingQty] = useState('');
-  const [unitPrice, setUnitPrice] = useState('');
+  const [usageAmount, setUsageAmount] = useState('');
   const [note, setNote] = useState('');
 
   const registeredCount = result.ownPurchaseCandidates.filter((c) => c.registered).length;
   /** 登録外の品目には理由を残してもらう。翌月「なぜ入れたのか」を追えるようにするため */
   const needsNote = selected !== null && !selected.registered;
-  const canCommit = selected !== null && (!needsNote || note.trim() !== '');
+  const canCommit = selected !== null && Number(usageAmount) > 0 && (!needsNote || note.trim() !== '');
 
   // 検索方法の選択欄は設けない（要件§7-4）。入力中に品名を部分一致検索する。
   const candidates = useMemo(
@@ -42,19 +40,14 @@ export function StepOwnPurchase({
     setSelected(c);
     setQuery(c.name);
     const existing = entries.find((e) => e.code === c.code);
-    const row = rowOf(c.code);
-    setPurchaseQty(String(existing?.purchaseQty ?? row?.purchaseQty ?? 0));
-    setClosingQty(String(existing?.closingQty ?? row?.closingQty ?? 0));
-    setUnitPrice(String(existing?.unitPrice ?? c.lastUnitPrice ?? row?.unitPrice ?? 0));
+    setUsageAmount(existing === undefined ? '' : String(existing.usageAmount));
     setNote(existing?.note ?? '');
   };
 
   const reset = (): void => {
     setSelected(null);
     setQuery('');
-    setPurchaseQty('');
-    setClosingQty('');
-    setUnitPrice('');
+    setUsageAmount('');
     setNote('');
   };
 
@@ -62,9 +55,7 @@ export function StepOwnPurchase({
     if (!selected || !canCommit) return;
     const entry: OwnPurchaseInput = {
       code: selected.code,
-      purchaseQty: Number(purchaseQty) || 0,
-      closingQty: Number(closingQty) || 0,
-      unitPrice: Number(unitPrice) || 0,
+      usageAmount: Number(usageAmount) || 0,
       note: note || null,
     };
     const rest = entries.filter((e) => e.code !== entry.code);
@@ -76,21 +67,27 @@ export function StepOwnPurchase({
     onChange(entries.filter((e) => e.code !== code));
   };
 
-  const totalPurchase = entries.reduce((s, e) => s + e.purchaseQty * e.unitPrice, 0);
-  const totalClosing = entries.reduce((s, e) => s + e.closingQty * e.unitPrice, 0);
+  const totalAmount = entries.reduce((s, e) => s + e.usageAmount, 0);
+  /** 本部発注から求まっている当月使用高。金額を入れるとこの行は置き換わる */
+  const currentUsage = (code: string): number | null => rowOf(code)?.usageAmount ?? null;
 
   return (
     <>
       <Panel
         title="STEP 4　自店購入入力"
-        hint="品名を入力すると当月マスタの全商品を部分一致で検索します。候補から選んで数量と単価を入力してください。"
+        hint="品名を入力すると当月マスタの全商品を部分一致で検索します。候補から選んで、その商品に使った合計金額を入れてください。"
       >
         <Note>
+          <strong>入力するのは「その商品に使った合計金額」だけです。</strong>
+          数量と単価は聞きません（2026-10-30 変更）。レシートの合計をそのまま入れてください。
+          入れた金額がその商品の<strong>当月使用高</strong>になり、期末在庫は0（使い切り）として扱います。
+        </Note>
+        <Note>
           自店購入品として登録されているのは
-          <strong>缶ビール・ミニトマト・キャベツ・コーラ160ml・レモンスライス</strong> の5品です。
+          <strong>缶ビール・ミニトマト・キャベツ・レモンスライス</strong> の4品です。
           このうち当月マスタにあるのは <strong>{registeredCount} 件</strong>で、
           候補の先頭に <span className="tag-reg">登録済</span> つきで出ます。
-          これらは本部発注ではないため発注累計照会に現れず、ここで入力しないと期中仕入が0のままになります。
+          これらは本部発注ではないため発注累計照会に現れず、ここで入力しないと使用高が0のままになります。
         </Note>
         <Note>
           <strong>登録外の商品も入力できます。</strong>
@@ -149,18 +146,23 @@ export function StepOwnPurchase({
                 <strong>なぜ自店購入として計上するのか</strong>を備考に残してください（必須）。
               </Note>
             ) : null}
+            {currentUsage(selected.code) ? (
+              <Note variant="warn">
+                この商品は発注累計から当月使用高 <strong>{formatAmount(currentUsage(selected.code))} 円</strong> が求まっています。
+                金額を入れると<strong>その金額に置き換わります</strong>。本部発注の分も含めた合計を入れてください。
+              </Note>
+            ) : null}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <label className="field">
-                <span>期中仕入（数量）</span>
-                <input type="number" step="any" value={purchaseQty} onChange={(e) => setPurchaseQty(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>期末在庫（数量）</span>
-                <input type="number" step="any" value={closingQty} onChange={(e) => setClosingQty(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>単価（円）</span>
-                <input type="number" step="any" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
+                <span>使った合計金額（円）</span>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={usageAmount}
+                  onChange={(e) => setUsageAmount(e.target.value)}
+                  placeholder="例: 6006"
+                />
               </label>
               <label className="field">
                 <span>備考{needsNote ? '（必須）' : ''}</span>
@@ -192,10 +194,7 @@ export function StepOwnPurchase({
                 <th>商品名</th>
                 <th>登録</th>
                 <th>集計先</th>
-                <th className="right">期中仕入</th>
-                <th className="right">期末在庫</th>
-                <th className="right">単価</th>
-                <th className="right">仕入額</th>
+                <th className="right">使った合計金額</th>
                 <th>備考</th>
                 <th></th>
               </tr>
@@ -203,7 +202,7 @@ export function StepOwnPurchase({
             <tbody>
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="muted">
+                  <td colSpan={7} className="muted">
                     まだ入力がありません。入力しない場合は当月マスタの値がそのまま使われます。
                   </td>
                 </tr>
@@ -222,10 +221,7 @@ export function StepOwnPurchase({
                         )}
                       </td>
                       <td>{row?.category ?? '—'}</td>
-                      <td className="num">{formatQty(e.purchaseQty)}</td>
-                      <td className="num">{formatQty(e.closingQty)}</td>
-                      <td className="num">{formatAmount(e.unitPrice)}</td>
-                      <td className="num">{formatAmount(e.purchaseQty * e.unitPrice)}</td>
+                      <td className="num">{formatAmount(e.usageAmount)}</td>
                       <td>{e.note ?? ''}</td>
                       <td>
                         <button
@@ -245,13 +241,11 @@ export function StepOwnPurchase({
             {entries.length > 0 ? (
               <tfoot>
                 <tr>
-                  <th colSpan={7} className="right">
+                  <th colSpan={4} className="right">
                     合計
                   </th>
-                  <th className="right">{formatAmount(totalPurchase)}</th>
-                  <th colSpan={2} className="right">
-                    期末在庫高 {formatAmount(totalClosing)}
-                  </th>
+                  <th className="right">{formatAmount(totalAmount)}</th>
+                  <th colSpan={2} />
                 </tr>
               </tfoot>
             ) : null}

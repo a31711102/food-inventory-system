@@ -20,6 +20,8 @@ export const HQ_MASTER_PROFILE: MappingProfile = {
     purchaseQty: { source: '期中仕入', required: true, dtype: 'number', writeback: true },
     openingQty: { source: '期首在庫', required: true, dtype: 'number', writeback: true },
     unitPrice: { source: '単価', required: true, dtype: 'number', writeback: 'ownPurchaseOnly' },
+    // 自店購入で金額だけを入れた行は、ここに金額をそのまま書く（数式を値に置き換える）
+    usageAmount: { source: '当月使用高', required: false, dtype: 'number', writeback: 'ownPurchaseOnly' },
     category: { source: '分類', required: true, dtype: 'str' },
     conversionFactor: { source: '仕入れ単位', required: true, dtype: 'number' },
   },

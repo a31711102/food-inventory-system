@@ -117,17 +117,26 @@ describe('書き戻し内容', () => {
     expect(out.cell('入力用', `K${own.lineNo}`)?.value).toBe(own.unitPrice);
   });
 
-  it('STEP 4 で単価を入れた登録外の商品も、単価を書き戻す', async () => {
-    // 自店購入の候補を全商品へ広げたので「Aコードなら書き戻す」では足りない。
-    // 書き戻さないと、画面の使用高と出力Excelの使用高が食い違う。
+  it('自店購入で金額を入れた行は、当月使用高に金額を書き、数量・単価の欄は空にする', async () => {
+    // 自店購入は数量・単価を聞かず、使った分の合計金額だけを受け取る（2026-10-30）。
+    // 当月使用高はその行だけ数式ではなく値になる。
     const input = await prepare();
     const target = input.rows.find((r) => r.code === '000140')!;
     const rows = input.rows.map((r) =>
-      r.code === '000140' ? { ...r, unitPrice: 9999, unitPriceFromInput: true } : r,
+      r.code === '000140'
+        ? { ...r, purchaseQty: 0, closingQty: 0, openingQty: 0, unitPrice: 0, usageAmountFromInput: 10746, usageAmount: 10746, closingAmount: 0, usageQty: null }
+        : r,
     );
     const out = await XlsxWorkbook.load((await exportWorkbook({ ...input, rows })).bytes);
 
-    expect(out.cell('入力用', `K${target.lineNo}`)?.value).toBe(9999);
+    expect(out.cell('入力用', `L${target.lineNo}`)?.value).toBe(10746);
+    expect(out.cell('入力用', `L${target.lineNo}`)?.hasFormula).toBe(false);
+    for (const col of ['G', 'H', 'I', 'K']) {
+      expect(out.cell('入力用', `${col}${target.lineNo}`)?.value ?? null).toBeNull();
+    }
+    // ほかの行の当月使用高は数式のまま
+    const other = input.rows.find((r) => r.code === '000158')!;
+    expect(out.cell('入力用', `L${other.lineNo}`)?.hasFormula).toBe(true);
   });
 
   it('入力していない本部商品の単価は書き換えない', async () => {

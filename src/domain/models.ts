@@ -36,11 +36,13 @@ export interface ProductRow {
   status: ProductStatus;
   isOwnPurchase: boolean;
   /**
-   * 単価を STEP 4（自店購入入力）で上書きしたか。
-   * 自店購入の候補を全商品へ広げたため、登録済みの5品以外でも単価が入りうる。
-   * 出力Excelへ単価を書き戻すかの判断に使う。
+   * STEP 4（自店購入入力）で入れた**当月使用高**（円）。
+   *
+   * 自店購入は数量と単価を聞かず、使った分の合計金額だけを受け取る（2026-10-30 店舗オーナー指示）。
+   * 平均単価を前工程で出す手間をなくすため。この値がある行は、数量を追わず
+   * 当月使用高＝この金額、期末在庫高＝0（使い切り）として扱う。
    */
-  unitPriceFromInput?: boolean;
+  usageAmountFromInput?: number | null;
   /** 備品（食材以外）。コードの数値部が5桁。棚卸の計算対象外（要件§10-2） */
   isSupply: boolean;
   /** 新規商品の期首0を管理者が承認したか。未承認のまま出力できない（W004）。 */
@@ -112,15 +114,15 @@ export interface OwnPurchaseCandidate {
   /** 自店購入品として登録済みか。未登録でも入力はできるが、理由の記録を求める */
   registered: boolean;
   lastUsedYm: string | null;
-  lastUnitPrice: number | null;
+  /** 前回この商品に入れた金額。入力の目安として画面に出す */
+  lastAmount: number | null;
 }
 
-/** 自店購入の画面入力。 */
+/** 自店購入の画面入力。聞くのは使った分の合計金額だけ（2026-10-30 店舗オーナー指示）。 */
 export interface OwnPurchaseInput {
   code: ProductCode;
-  purchaseQty: number;
-  closingQty: number;
-  unitPrice: number;
+  /** その商品の当月使用高（円）。数量・単価は聞かない */
+  usageAmount: number;
   note: string | null;
 }
 

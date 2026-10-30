@@ -269,11 +269,11 @@ export class XlsxWorkbook {
     }
   }
 
-  private queue(sheetName: string, ref: string, value: PendingValue): void {
+  private queue(sheetName: string, ref: string, value: PendingValue, allowFormula = false): void {
     if (!this.sheets.has(sheetName)) {
       throw new Error(`シート「${sheetName}」が見つかりません。`);
     }
-    this.assertWritable(sheetName, ref);
+    if (!allowFormula) this.assertWritable(sheetName, ref);
     let map = this.pending.get(sheetName);
     if (!map) {
       map = new Map();
@@ -288,6 +288,17 @@ export class XlsxWorkbook {
 
   setString(sheetName: string, ref: string, value: string): void {
     this.queue(sheetName, ref, { kind: 'string', value });
+  }
+
+  /**
+   * 数式のセルを値で置き換える。
+   *
+   * 通常の書き戻しは数式を守る（`assertWritable`）。例外は自店購入の「当月使用高」だけで、
+   * 自店購入は数量と単価を追わず金額だけを受け取るため、その行は単価×数量では求まらない
+   * （2026-10-30 店舗オーナー指示）。対象の行だけ数式が値に変わる。
+   */
+  setNumberReplacingFormula(sheetName: string, ref: string, value: number | null): void {
+    this.queue(sheetName, ref, { kind: 'number', value }, true);
   }
 
   /** Excel が開いたときに全数式を再計算させる。書き戻しでキャッシュ値が古くなるため必須。 */

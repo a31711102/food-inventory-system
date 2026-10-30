@@ -325,7 +325,8 @@ export class InventoryDatabase {
     code: string;
     name: string;
     category: string;
-    unitPrice: number;
+    /** 入力した当月使用高（円）。unit_price 列に入れる（列名は自店購入が数量×単価だった頃の名残） */
+    amount: number;
     targetYm: string;
   }): void {
     this.run(
@@ -337,7 +338,7 @@ export class InventoryDatabase {
         entry.name,
         entry.name.trim().toLowerCase(),
         entry.category,
-        String(entry.unitPrice),
+        String(entry.amount),
         entry.targetYm,
         new Date().toISOString(),
       ],
@@ -373,7 +374,7 @@ export class InventoryDatabase {
       // 履歴に残っている＝過去に自店購入として入力した実績がある品
       registered: true,
       lastUsedYm: r.last_ym,
-      lastUnitPrice: r.unit_price === null ? null : Number(r.unit_price),
+      lastAmount: r.unit_price === null ? null : Number(r.unit_price),
     }));
   }
 

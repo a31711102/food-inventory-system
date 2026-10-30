@@ -195,9 +195,9 @@ describe('InventoryDatabase', () => {
 
   describe('自店購入の履歴検索（要件§4）', () => {
     beforeEach(() => {
-      db.recordOwnPurchase({ code: 'A00043', name: 'キャベツ(自店購入）', category: '09.野菜', unitPrice: 273, targetYm: '2026-07' });
-      db.recordOwnPurchase({ code: 'A00043', name: 'キャベツ(自店購入）', category: '09.野菜', unitPrice: 280, targetYm: '2026-08' });
-      db.recordOwnPurchase({ code: 'A00049', name: '牛乳(自店購入)', category: '11.ドリンク', unitPrice: 210, targetYm: '2026-08' });
+      db.recordOwnPurchase({ code: 'A00043', name: 'キャベツ(自店購入）', category: '09.野菜', amount: 273, targetYm: '2026-07' });
+      db.recordOwnPurchase({ code: 'A00043', name: 'キャベツ(自店購入）', category: '09.野菜', amount: 280, targetYm: '2026-08' });
+      db.recordOwnPurchase({ code: 'A00049', name: '牛乳(自店購入)', category: '11.ドリンク', amount: 210, targetYm: '2026-08' });
     });
 
     it('品名の部分一致で検索できる', () => {
@@ -217,19 +217,19 @@ describe('InventoryDatabase', () => {
     });
 
     it('最終使用年月の降順で並ぶ', () => {
-      db.recordOwnPurchase({ code: 'A00050', name: 'マンゴーソース', category: '14.限定', unitPrice: 500, targetYm: '2026-09' });
+      db.recordOwnPurchase({ code: 'A00050', name: 'マンゴーソース', category: '14.限定', amount: 500, targetYm: '2026-09' });
       expect(db.searchOwnPurchaseHistory('')[0]?.code).toBe('A00050');
     });
 
     it('表記揺れを推測で同一視しない（全角/半角を統合しない）', () => {
-      db.recordOwnPurchase({ code: 'A99999', name: 'ＡＢＣ牛乳', category: '11.ドリンク', unitPrice: 100, targetYm: '2026-08' });
+      db.recordOwnPurchase({ code: 'A99999', name: 'ＡＢＣ牛乳', category: '11.ドリンク', amount: 100, targetYm: '2026-08' });
       // 半角 "ABC" では全角の品名にヒットしない
       expect(db.searchOwnPurchaseHistory('ABC')).toHaveLength(0);
       expect(db.searchOwnPurchaseHistory('ＡＢＣ').map((c) => c.code)).toEqual(['A99999']);
     });
 
     it('英字の大文字小文字は区別しない', () => {
-      db.recordOwnPurchase({ code: 'A88888', name: 'Cabbage', category: '09.野菜', unitPrice: 100, targetYm: '2026-08' });
+      db.recordOwnPurchase({ code: 'A88888', name: 'Cabbage', category: '09.野菜', amount: 100, targetYm: '2026-08' });
       expect(db.searchOwnPurchaseHistory('cabbage').map((c) => c.code)).toEqual(['A88888']);
     });
 

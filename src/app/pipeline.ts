@@ -347,14 +347,15 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     rows = rows.map((row) => {
       const entry = byCode.get(row.code);
       if (!entry || row.isSupply) return row;
+      // 聞くのは使った分の合計金額だけ。数量・単価は追わない（2026-10-30 店舗オーナー指示）。
+      // 入力した金額がその商品の当月使用高になり、期末在庫は使い切り（0）として扱う。
       return {
         ...row,
-        purchaseQty: entry.purchaseQty,
-        closingQty: entry.closingQty,
-        unitPrice: entry.unitPrice,
-        // 画面で入れた単価は出力Excelにも書き戻す。
-        // 書き戻さないと、画面の使用高と出力Excelの使用高が食い違う。
-        unitPriceFromInput: true,
+        purchaseQty: 0,
+        closingQty: 0,
+        openingQty: 0,
+        unitPrice: 0,
+        usageAmountFromInput: entry.usageAmount,
       };
     });
     issues.addMany('W024',
@@ -379,7 +380,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         return { ref: { productCode: r.code }, text: `${r.code} ${r.name}${note ? `（${note}）` : ''}` };
       });
     issues.addMany('I005', unregistered, (n, d) =>
-      `自店購入品として登録されていない ${n} 件に期中仕入を入力しました（${summarize(d)}）。毎月続くようであれば、自店購入品の登録を本部・店舗オーナーに依頼してください。`,
+      `自店購入品として登録されていない ${n} 件に金額を入力しました（${summarize(d)}）。毎月続くようであれば、自店購入品の登録を本部・店舗オーナーに依頼してください。`,
       { fileName: input.master.fileName });
   }
 
@@ -481,7 +482,7 @@ export function buildOwnPurchaseCandidates(rows: readonly ProductRow[]): OwnPurc
       category: r.category,
       registered: r.isOwnPurchase,
       lastUsedYm: null,
-      lastUnitPrice: r.unitPrice || null,
+      lastAmount: null,
     }));
 }
 

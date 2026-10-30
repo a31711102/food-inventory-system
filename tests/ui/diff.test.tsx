@@ -207,6 +207,8 @@ describe('M-07b 登録外の商品も入力できる（要件§10-4）', () => {
     await h.user.click(target);
 
     const fields = [...document.querySelectorAll<HTMLInputElement>('.panel input')];
+    const amount = fields.find((f) => f.placeholder === '例: 6006')!;
+    fireEvent.change(amount, { target: { value: '10746' } });
     const note = fields.find((f) => f.placeholder === '例: 近隣スーパーで購入')!;
     fireEvent.change(note, { target: { value: '近隣スーパーで購入' } });
 
@@ -227,14 +229,22 @@ describe('M-07b 登録外の商品も入力できる（要件§10-4）', () => {
     expect(issuesOf('I005')[0]!.message).toContain('近隣スーパーで購入');
   }, 60000);
 
-  it('登録済みの品を選んでも理由は求められない', async () => {
+  it('登録済みの品を選んでも理由は求められない。聞くのは金額だけ', async () => {
     const h = await openStep4();
     const target = candidates().find((b) => (b.textContent ?? '').includes('A00043'))!;
     await h.user.click(target);
 
     await waitFor(() => expect(findButton('この内容で登録')).not.toBeNull());
-    expect(findButton('この内容で登録')?.disabled).toBe(false);
     expect(document.body.textContent).not.toContain('なぜ自店購入として計上するのか');
+    // 数量・単価は聞かない（2026-10-30）
+    expect(document.body.textContent).not.toContain('期中仕入（数量）');
+    expect(document.body.textContent).not.toContain('単価（円）');
+
+    // 金額を入れるまで登録できない
+    expect(findButton('この内容で登録')?.disabled).toBe(true);
+    const amount = [...document.querySelectorAll<HTMLInputElement>('.panel input')].find((f) => f.placeholder === '例: 6006')!;
+    fireEvent.change(amount, { target: { value: '6552' } });
+    await waitFor(() => expect(findButton('この内容で登録')?.disabled).toBe(false));
   }, 60000);
 });
 

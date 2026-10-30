@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS own_purchase_history (
   product_name TEXT NOT NULL,
   search_key   TEXT NOT NULL,
   category     TEXT,
+  -- 入力した当月使用高（円）。自店購入が数量×単価だった頃の列名をそのまま使っている
   unit_price   TEXT,
   target_ym    TEXT NOT NULL,
   created_at   TEXT NOT NULL

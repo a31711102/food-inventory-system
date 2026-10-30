@@ -62,20 +62,20 @@ describe('isSupplyCode（数値部が5桁なら備品）', () => {
 describe('isOwnPurchase（既定リストとの照合）', () => {
   const codes = new Set(DEFAULT_OWN_PURCHASE_CODES);
 
-  it('既定リストは5品', () => {
+  it('既定リストは4品。コーラは対象外（2026-10-30 店舗オーナー判断）', () => {
     expect(DEFAULT_OWN_PURCHASE_CODES).toEqual([
       '006063', // 缶ビール６缶パック
       '001250', // ミニトマト
       'A00043', // キャベツ(自店購入）
-      '005249', // コーラ１６０ＭＬ３０缶入
       '007193', // レモンハーフスライス５００ｇ１袋
     ]);
+    expect(DEFAULT_OWN_PURCHASE_CODES).not.toContain('005249'); // コーラ１６０ＭＬ３０缶入
   });
 
   it('4品のうち3品は0始まりの本部コード（Aコードではない）', () => {
     // 「Aコード＝自店購入」という以前の判定は実態と合っていなかった
     const notA = DEFAULT_OWN_PURCHASE_CODES.filter((c) => !c.startsWith('A'));
-    expect(notA).toHaveLength(4);
+    expect(notA).toHaveLength(3);
   });
 
   it('リストにあるコードだけを自店購入とする', () => {

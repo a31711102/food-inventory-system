@@ -136,12 +136,13 @@ export function DatabasePanel({
           usage: result.report.totalUsageAmount,
         },
       });
-      for (const row of result.rows.filter((r) => r.isOwnPurchase && r.purchaseQty !== 0)) {
+      // 自店購入として金額を入れた商品を履歴に残す（翌月の候補検索に使う）
+      for (const row of result.rows.filter((r) => r.usageAmountFromInput)) {
         db.recordOwnPurchase({
           code: row.code,
           name: row.name,
           category: row.category,
-          unitPrice: row.unitPrice,
+          amount: row.usageAmountFromInput ?? 0,
           targetYm,
         });
       }
